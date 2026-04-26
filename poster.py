@@ -1,58 +1,142 @@
 import os
+import io
 import feedparser
-from google import genai
-from google.genai import types
+import requests
+from deep_translator import GoogleTranslator
+from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
 
+# --- Переменные окружения из секретов GitHub ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-GEMINI_KEY = os.environ['GEMINI_API_KEY']
+UNSPLASH_KEY = os.environ['UNSPLASH_ACCESS_KEY']
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
-client = genai.Client(api_key=GEMINI_KEY)
-feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+# --- Настройки ---
+MAX_NEWS = 5  # Сколько новостей попадет в итоговый пост
+TRANSLATOR = GoogleTranslator(source='auto', target='ru')
+feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
+
+def get_background_image(query="crypto blockchain technology"):
+    """Ищет тематическую картинку через Unsplash API."""
+    url = "https://api.unsplash.com/photos/random"
+    params = {
+        "query": query,
+        "orientation": "landscape",
+        "content_filter": "high"
+    }
+    headers = {"Authorization": f"Client-ID {UNSPLASH_KEY}"}
+    
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        data = response.json()
+        image_url = data["urls"]["regular"]  # Берём изображение хорошего качества
+        print(f"Unsplash: найдено изображение по запросу '{query}'")
+        return requests.get(image_url).content
+    except Exception as e:
+        print(f"Ошибка Unsplash: {e}")
+        return None
+
+def create_news_banner(news_title, background_bytes):
+    """Создаёт изображение-баннер с заголовком новости, используя Pillow."""
+    try:
+        # Открываем фоновое изображение
+        image = Image.open(io.BytesIO(background_bytes))
+        # Подгоняем под Telegram-формат (ширина 1280px)
+        image = image.resize((1280, 720), Image.LANCZOS)
+        
+        draw = ImageDraw.Draw(image)
+        
+        # Пытаемся использовать системный шрифт (на GitHub Actions есть DejaVu)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        except IOError:
+            font = ImageFont.load_default()
+        
+        # Тёмная полупрозрачная плашка для читаемости текста
+        overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 128))
+        image.paste(overlay, (0, 520), overlay)
+        
+        # Переносим текст, если он слишком длинный
+        if font.getlength(news_title) > 1200:
+            words = news_title.split()
+            lines = []
+            current_line = ""
+            for word in words:
+                test_line = f"{current_line} {word}".strip()
+                if font.getlength(test_line) < 1200:
+                    current_line = test_line
+                else:
+                    lines.append(current_line)
+                    current_line = word
+            lines.append(current_line)
+            
+            y_offset = 540
+            for line in lines:
+                draw.text((40, y_offset), line, font=font, fill="white")
+                y_offset += 45
+        else:
+            draw.text((40, 560), news_title, font=font, fill="white")
+        
+        # Сохраняем результат в буфер
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='JPEG')
+        img_byte_arr.seek(0)
+        return img_byte_arr
+    except Exception as e:
+        print(f"Ошибка Pillow: {e}")
+        return None
 
 async def main():
+    # --- 1. Парсим новости ---
     feed = feedparser.parse(RSS_FEED)
-    print(f"Источник 1 ({RSS_FEED}): статус {feed.status}, найдено {len(feed.entries)} новостей")
-    entries = feed.entries[:5]
-
+    print(f"Источник: {RSS_FEED}, статус: {feed.status}, найдено: {len(feed.entries)}")
+    
+    entries = feed.entries[:MAX_NEWS]
     if not entries:
-        backup_url = 'https://cointelegraph.com/rss'
-        print(f"Первичный источник пуст. Пробуем {backup_url}")
-        feed = feedparser.parse(backup_url)
-        print(f"Источник 2: статус {feed.status}, найдено {len(feed.entries)} новостей")
-        entries = feed.entries[:5]
-
-    if not entries:
-        print("Новостей нет нигде. Выход.")
+        print("Нет новостей.")
         return
 
-    headlines = "\n".join([f"- {e.title}" for e in entries])
-    prompt = (
-        "Ты — редактор крипто-новостей. Сделай из этих заголовков привлекательный "
-        "пост для Telegram. Используй эмодзи, разбивай на абзацы, сохраняй смысл. "
-        "Вот заголовки:\n" + headlines
-    )
+    # --- 2. Переводим и готовим пост ---
+    post_lines = [""
+    for i, entry in enumerate(entries, 1):
+        try:
+            # Переводим заголовок
+            translated_title = TRANSLATOR.translate(entry.title)
+            post_lines.append(f"{i}. {translated_title}")
+        except Exception as e:
+            print(f"Ошибка перевода: {e}")
+            post_lines.append(f"{i}. {entry.title}")
+    
+    post_text = "\n".join(post_lines)
+    print("Перевод завершён.")
 
-    try:
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction="Ты — редактор крипто-новостей."
-            )
-        )
-        post_text = response.text
-        print("ИИ успешно обработал новости.")
-    except Exception as e:
-        print(f"Ошибка Gemini: {e}")
-        post_text = "🔥 Свежие новости криптомира:\n\n" + headlines
+    # --- 3. Получаем картинку для фона ---
+    background = get_background_image()
+    if background:
+        # Создаём баннер из первой новости
+        top_news_title = post_lines[0].split(". ", 1)[-1] if post_lines else "Crypto News"
+        banner_image = create_news_banner(top_news_title, background)
+    else:
+        banner_image = None
 
+    # --- 4. Отправляем в Telegram ---
     bot = Bot(token=TELEGRAM_TOKEN)
-    await bot.send_message(chat_id=CHAT_ID, text=post_text, parse_mode='HTML')
-    print("Сообщение отправлено в канал!")
+    
+    if banner_image:
+        # Отправляем фото с подписью (весь список новостей)
+        await bot.send_photo(
+            chat_id=CHAT_ID,
+            photo=banner_image,
+            caption=post_text,
+            parse_mode='HTML'
+        )
+        print("Пост с баннером отправлен!")
+    else:
+        # Резервный вариант: только текст
+        await bot.send_message(chat_id=CHAT_ID, text=post_text)
+        print("Баннер не создан, отправлен только текст.")
 
 if __name__ == '__main__':
     asyncio.run(main())
