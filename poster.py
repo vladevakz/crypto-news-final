@@ -14,7 +14,7 @@ UNSPLASH_KEY = os.environ['UNSPLASH_ACCESS_KEY']
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
-MAX_NEWS = 5  # Сколько новостей попадет в итоговый пост
+MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 
@@ -31,7 +31,7 @@ def get_background_image(query="crypto blockchain technology"):
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
         data = response.json()
-        image_url = data["urls"]["regular"]  # Берём изображение хорошего качества
+        image_url = data["urls"]["regular"]
         print(f"Unsplash: найдено изображение по запросу '{query}'")
         return requests.get(image_url).content
     except Exception as e:
@@ -39,26 +39,20 @@ def get_background_image(query="crypto blockchain technology"):
         return None
 
 def create_news_banner(news_title, background_bytes):
-    """Создаёт изображение-баннер с заголовком новости, используя Pillow."""
+    """Создаёт изображение-баннер с заголовком новости."""
     try:
-        # Открываем фоновое изображение
         image = Image.open(io.BytesIO(background_bytes))
-        # Подгоняем под Telegram-формат (ширина 1280px)
         image = image.resize((1280, 720), Image.LANCZOS)
-        
         draw = ImageDraw.Draw(image)
         
-        # Пытаемся использовать системный шрифт (на GitHub Actions есть DejaVu)
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
         except IOError:
             font = ImageFont.load_default()
         
-        # Тёмная полупрозрачная плашка для читаемости текста
         overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 128))
         image.paste(overlay, (0, 520), overlay)
         
-        # Переносим текст, если он слишком длинный
         if font.getlength(news_title) > 1200:
             words = news_title.split()
             lines = []
@@ -79,7 +73,6 @@ def create_news_banner(news_title, background_bytes):
         else:
             draw.text((40, 560), news_title, font=font, fill="white")
         
-        # Сохраняем результат в буфер
         img_byte_arr = io.BytesIO()
         image.save(img_byte_arr, format='JPEG')
         img_byte_arr.seek(0)
@@ -99,10 +92,9 @@ async def main():
         return
 
     # --- 2. Переводим и готовим пост ---
-    post_lines = [""
+    post_lines = [""]  # ИСПРАВЛЕНО: список с пустой строкой
     for i, entry in enumerate(entries, 1):
         try:
-            # Переводим заголовок
             translated_title = TRANSLATOR.translate(entry.title)
             post_lines.append(f"{i}. {translated_title}")
         except Exception as e:
@@ -115,9 +107,13 @@ async def main():
     # --- 3. Получаем картинку для фона ---
     background = get_background_image()
     if background:
-        # Создаём баннер из первой новости
-        top_news_title = post_lines[0].split(". ", 1)[-1] if post_lines else "Crypto News"
-        banner_image = create_news_banner(top_news_title, background)
+        # Берём заголовок первой новости для баннера (без номера)
+        first_title = entries[0].title
+        try:
+            first_title = TRANSLATOR.translate(first_title)
+        except:
+            pass
+        banner_image = create_news_banner(first_title, background)
     else:
         banner_image = None
 
@@ -125,7 +121,6 @@ async def main():
     bot = Bot(token=TELEGRAM_TOKEN)
     
     if banner_image:
-        # Отправляем фото с подписью (весь список новостей)
         await bot.send_photo(
             chat_id=CHAT_ID,
             photo=banner_image,
@@ -134,7 +129,6 @@ async def main():
         )
         print("Пост с баннером отправлен!")
     else:
-        # Резервный вариант: только текст
         await bot.send_message(chat_id=CHAT_ID, text=post_text)
         print("Баннер не создан, отправлен только текст.")
 
