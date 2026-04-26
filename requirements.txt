@@ -1,3 +1,5 @@
 feedparser
 python-telegram-bot
-google-genai
+deep-translator
+pillow
+requests
