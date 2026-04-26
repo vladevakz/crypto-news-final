@@ -10,7 +10,7 @@ import asyncio
 # --- Переменные окружения из секретов GitHub ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-UNSPLASH_KEY = os.environ['UNSPLASH_ACCESS_KEY']
+UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)  # Не падаем, если нет ключа
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -19,7 +19,10 @@ TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 
 def get_background_image(query="crypto blockchain technology"):
-    """Ищет тематическую картинку через Unsplash API."""
+    """Ищет тематическую картинку через Unsplash API. Нужен ключ."""
+    if not UNSPLASH_KEY:
+        print("Unsplash: ключ не задан, пропускаем.")
+        return None
     url = "https://api.unsplash.com/photos/random"
     params = {
         "query": query,
@@ -92,7 +95,7 @@ async def main():
         return
 
     # --- 2. Переводим и готовим пост ---
-    post_lines = [""]  # ИСПРАВЛЕНО: список с пустой строкой
+    post_lines = [""]
     for i, entry in enumerate(entries, 1):
         try:
             translated_title = TRANSLATOR.translate(entry.title)
@@ -106,16 +109,14 @@ async def main():
 
     # --- 3. Получаем картинку для фона ---
     background = get_background_image()
+    banner_image = None
     if background:
-        # Берём заголовок первой новости для баннера (без номера)
         first_title = entries[0].title
         try:
             first_title = TRANSLATOR.translate(first_title)
         except:
             pass
         banner_image = create_news_banner(first_title, background)
-    else:
-        banner_image = None
 
     # --- 4. Отправляем в Telegram ---
     bot = Bot(token=TELEGRAM_TOKEN)
@@ -130,7 +131,7 @@ async def main():
         print("Пост с баннером отправлен!")
     else:
         await bot.send_message(chat_id=CHAT_ID, text=post_text)
-        print("Баннер не создан, отправлен только текст.")
+        print("Баннер не создан (нет ключа или ошибка), отправлен только текст.")
 
 if __name__ == '__main__':
     asyncio.run(main())
