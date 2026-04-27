@@ -18,8 +18,12 @@ if ($('settings-status')) showStatus('settings-status', '✅ Настройки 
 window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-    $(`tab-${tabName}`).classList.add('active');
-    event.target.classList.add('active');
+    const target = $(`tab-${tabName}`);
+    if (target) target.classList.add('active');
+    // Найти кнопку, которая вызвала событие, и подсветить её
+    const btn = document.querySelector(`.tab-btn[onclick*="${tabName}"]`);
+    if (btn) btn.classList.add('active');
+    else event.target.classList.add('active');
 };
 
 // --- Вспомогательные функции ---
@@ -29,6 +33,15 @@ function showStatus(elementId, message, type) {
 }
 function githubHeaders() {
     return { 'Authorization': `token ${GH_TOKEN}`, 'Accept': 'application/vnd.github+json' };
+}
+
+// Проверка токена GitHub
+function requireToken() {
+    if (!GH_TOKEN) {
+        alert('Сначала сохраните GitHub Token на вкладке "Настройки"');
+        return false;
+    }
+    return true;
 }
 
 // --- Сохранение токенов ---
@@ -47,7 +60,7 @@ window.saveSettings = function() {
 
 // --- Запуск workflow ---
 window.dispatchWorkflow = async function(workflowFile, btnId) {
-    if (!GH_TOKEN) return alert('Введите GitHub Token');
+    if (!requireToken()) return;
     const btn = $(btnId); if (!btn) return;
     btn.disabled = true;
     try {
@@ -62,7 +75,7 @@ window.dispatchWorkflow = async function(workflowFile, btnId) {
 
 // --- Проверка системы ---
 window.checkHealth = async function() {
-    if (!GH_TOKEN) return alert('Токен GitHub не введён');
+    if (!requireToken()) return;
     const results = [];
     try {
         const r = await fetch('https://api.github.com/user', { headers: githubHeaders() });
@@ -179,7 +192,7 @@ window.deleteFeed = function(index) {
     loadFeedsUI();
 };
 window.saveFeeds = async function() {
-    if (!GH_TOKEN || !window._feedsData) return;
+    if (!requireToken() || !window._feedsData) return;
     const content = JSON.stringify(window._feedsData, null, 2);
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, { headers: githubHeaders() });
@@ -206,7 +219,7 @@ async function loadPromptUI() {
     } catch(e) {}
 }
 window.savePrompt = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const content = JSON.stringify({ system_prompt: $('system-prompt-input').value });
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, { headers: githubHeaders() });
@@ -233,7 +246,7 @@ async function loadBlockedUI() {
     } catch(e) {}
 }
 window.saveBlocked = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const words = $('blocked-input').value.split(',').map(s=>s.trim()).filter(Boolean);
     const content = JSON.stringify(words);
     try {
@@ -261,7 +274,7 @@ async function loadUnsplashUI() {
     } catch(e) {}
 }
 window.saveUnsplashQuery = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const content = JSON.stringify({ query: $('unsplash-query-input').value });
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, { headers: githubHeaders() });
@@ -291,7 +304,7 @@ window.sendCustomMessage = async function() {
 
 // --- Логи последнего запуска ---
 window.viewLatestLogs = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/reply-messages.yml/runs?per_page=1`, { headers: githubHeaders() });
         const d = await r.json();
@@ -325,7 +338,7 @@ window.loadRecentMessages = async function() {
 
 // --- Сброс истории ---
 window.resetHistory = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     for (const [path, content] of [['posted.json','{}'],['update_offset.txt','0']]) {
         try {
             const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
@@ -383,7 +396,7 @@ $('backup-file-input').addEventListener('change', async function(e) {
 
 // --- Обновление cron ---
 window.updateCron = async function(wf, inputId) {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const newCron = $(inputId).value;
     try {
         const path = `.github/workflows/${wf}`;
@@ -414,7 +427,7 @@ async function loadModelsUI() {
     } catch(e) {}
 }
 window.saveAIModels = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const data = {
         chat: $('chat-model-select').value,
         tts: $('tts-model-select').value,
@@ -445,7 +458,7 @@ async function loadMaxNewsUI() {
     } catch(e) {}
 }
 window.saveMaxNews = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const max = parseInt($('max-news-input').value);
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, { headers: githubHeaders() });
@@ -464,7 +477,7 @@ window.saveMaxNews = async function() {
 
 // --- GitHub limits ---
 window.checkGitHubLimits = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     try {
         const r = await fetch('https://api.github.com/rate_limit', { headers: githubHeaders() });
         const d = await r.json();
@@ -494,7 +507,7 @@ async function loadErrorNotifyUI() {
     } catch(e) {}
 }
 window.saveErrorNotify = async function() {
-    if (!GH_TOKEN) return;
+    if (!requireToken()) return;
     const enabled = $('error-notify-checkbox').checked;
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, { headers: githubHeaders() });
