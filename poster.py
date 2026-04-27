@@ -14,8 +14,7 @@ from openai import OpenAI
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-YANDEX_KEY = os.environ.get('YANDEX_API_KEY', None)
-YANDEX_FOLDER_ID = os.environ.get('YANDEX_FOLDER_ID', None)
+YANDEX_KEY = os.environ.get('YANDEX_API_KEY', None)   # ваш ключ AQVN...
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -25,15 +24,15 @@ feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
 FONT_PATH = 'Roboto-Bold.ttf'
 
-# Инициализация YandexGPT
-if YANDEX_KEY and YANDEX_FOLDER_ID:
-    print("Yandex: ключ найден, создаю клиента.")
+# Инициализация AI Studio клиента
+if YANDEX_KEY:
+    print("AI Studio: ключ найден, создаю клиента.")
     client = OpenAI(
         api_key=YANDEX_KEY,
-        base_url="https://llm.api.cloud.yandex.net/foundationModels/v1"
+        base_url="https://ai-studio.api.yandex.net/v1"  # OpenAI-совместимый endpoint
     )
 else:
-    print("Yandex: ключ или Folder ID НЕ найдены, ИИ не будет использоваться.")
+    print("AI Studio: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
 # --- Функции истории (без изменений) ---
@@ -135,7 +134,7 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к YandexGPT ---
+    # --- Запрос к AI Studio ---
     ai_text = None
     if client:
         prompt = (
@@ -147,25 +146,30 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        
-        # model_uri для yandexgpt-lite
-        model_uri = f"gpt://{YANDEX_FOLDER_ID}/yandexgpt-lite/latest"
-
-        try:
-            print(f"Пробую модель {model_uri}...")
-            response = client.chat.completions.create(
-                model=model_uri,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.9,
-                max_tokens=800
-            )
-            ai_text = response.choices[0].message.content.strip()
-            if ai_text and len(ai_text) > 15:
-                print(f"YandexGPT ({model_uri}) сгенерировал пост.")
-            else:
-                print(f"Модель {model_uri} вернула пустой или слишком короткий ответ.")
-        except Exception as e:
-            print(f"Ошибка с моделью {model_uri}: {type(e).__name__}: {e}")
+        # Пробуем несколько моделей, доступных в AI Studio
+        models_to_try = [
+            "yandexgpt",            # основная модель YandexGPT
+            "yandexgpt-lite",       # облегчённая
+            "deepseek-v3"           # если есть доступ
+        ]
+        for model_name in models_to_try:
+            try:
+                print(f"Пробую модель {model_name}...")
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.9,
+                    max_tokens=800
+                )
+                ai_text = response.choices[0].message.content.strip()
+                if ai_text and len(ai_text) > 15:
+                    print(f"AI Studio ({model_name}) сгенерировал пост.")
+                    break
+                else:
+                    print(f"Модель {model_name} вернула пустой или короткий ответ.")
+            except Exception as e:
+                print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
+                continue
 
     # --- Fallback ---
     if not ai_text:
