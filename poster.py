@@ -8,15 +8,9 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-
-# Импорт для Gemini (Ваш текущий вариант)
 import google.generativeai as genai
 
-# Импорты для Hugging Face и Cohere (если захотите попробовать)
-# from huggingface_hub import InferenceClient
-# import cohere
-
-# --- Переменные окружения из секретов ---
+# --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 GEMINI_KEY = os.environ.get('GEMINI_API_KEY', None)
@@ -28,18 +22,12 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'
+FONT_PATH = 'Roboto-Bold.ttf'  # наш жирный шрифт (должен лежать в корне)
 
 # Инициализация Gemini
 genai.configure(api_key=GEMINI_KEY)
 
-# Инициализация Cohere (если будете использовать)
-# co = cohere.Client(os.environ.get('COHERE_API_KEY'))
-
-# Инициализация Hugging Face (если будете использовать)
-# hf_client = InferenceClient(token=os.environ.get('HF_API_KEY'))
-
-# --- Вспомогательные функции (история, картинки) без изменений ---
+# --- Функции истории (без изменений) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -62,6 +50,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
+# --- Функции картинок (с Font fallback) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -81,12 +70,17 @@ def create_news_banner(news_title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
-        try:
+
+        # Пробуем использовать загруженный Roboto-Bold.ttf
+        if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 48)
-        except IOError:
+        else:
+            # если нет – дефолтный жирный DejaVu Sans на GitHub Actions
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+
         overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 160))
         image.paste(overlay, (0, 520), overlay)
+
         max_width = 1200
         words = news_title.split()
         lines = []
@@ -99,10 +93,12 @@ def create_news_banner(news_title, background_bytes):
                 lines.append(current_line)
                 current_line = word
         lines.append(current_line)
+
         y = 540
         for line in lines:
             draw.text((40, y), line, font=font, fill="white")
             y += 55
+
         buf = io.BytesIO()
         image.save(buf, format='JPEG')
         buf.seek(0)
@@ -111,57 +107,61 @@ def create_news_banner(news_title, background_bytes):
         print(f"Pillow error: {e}")
         return None
 
-# --- Главная логика с ИИ ---
+# --- Главная логика ---
 async def main():
-    # 1. Парсинг и фильтрация
     history = load_history()
     feed = feedparser.parse(RSS_FEED)
     entries = feed.entries[:MAX_NEWS*2]
     fresh_entries = filter_fresh_entries(entries, history)[:MAX_NEWS]
     if not fresh_entries:
-        print("No new entries today.")
+        print("Нет новых новостей за сегодня.")
         return
 
-    # 2. Готовим «живой» пост через Gemini
+    # Собираем заголовки для ИИ
     headlines = "\n".join([f"- {e.title}" for e in fresh_entries])
+
+    # Улучшенный промпт – теперь Gemini будет стараться делать пост «с перчинкой»
     prompt = (
-        "Ты — главный редактор популярного крипто-канала. Креативно переработай эти заголовки в готовый пост на русском языке.\n\n"
-        "Требования:\n"
-        "- Дай броский заголовок для всего поста.\n"
-        "- Кратко (1-2 предложения) поясни каждую новость.\n"
-        "- Используй эмодзи и живое, хулиганское, но профессиональное оформление.\n"
-        "- Разбей текст на абзацы для лёгкого чтения.\n\n"
-        f"Вот заголовки:\n{headlines}"
+        "Ты — популярный крипто-блогер с отличным чувством юмора. У тебя есть пять свежих заголовков:\n"
+        f"{headlines}\n\n"
+        "Сделай из этого яркий пост для Telegram на русском языке. Строго следуй правилам:\n"
+        "1. Придумай цепляющий заголовок для всего поста (обязательно с эмодзи), который заинтригует.\n"
+        "2. Для каждой новости дай одну короткую, но сочную фразу с личным мнением (ироничным, дерзким, но профессиональным).\n"
+        "3. Разбавляй эмодзи, не перегружай.\n"
+        "4. Разбей текст на абзацы, чтобы читалось легко.\n"
+        "5. Никаких списков вида «1. 2. 3.» – просто живой текст.\n\n"
+        "Формат вывода:\n"
+        "🔥 ТВОЙ ЗАГОЛОВОК\n\n"
+        "Короткий лид-абзац.\n\n"
+        "• Пояснение первой новости\n\n"
+        "• Пояснение второй новости\n\n"
+        "... и так далее\n\n"
+        "Живой комментарий в конце.\n"
     )
 
-    print("Generating post with Gemini...")
-    # Вместо 'gemini-1.5-flash' используем надёжную модель
-    model = genai.GenerativeModel('gemini-pro')
-    response = model.generate_content(prompt)
-    post_text = response.text
-    print("AI post generated.")
+    # Пытаемся получить креативный пост от Gemini
+    ai_text = None
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        ai_text = response.text
+        print("ИИ сгенерировал креативный пост.")
+    except Exception as e:
+        print(f"Ошибка Gemini: {e}")
 
-    # --- Альтернатива: Заменить блок выше на вызов Cohere или Hugging Face ---
-    # # Cohere:
-    # response = co.generate(
-    #     model='command-r',
-    #     prompt=prompt,
-    #     max_tokens=800,
-    #     temperature=0.9
-    # )
-    # post_text = response.generations[0].text
-    #
-    # # Hugging Face:
-    # response = hf_client.text_generation(
-    #     prompt,
-    #     model="mistralai/Mixtral-8x7B-Instruct-v0.1", # Пример модели
-    #     max_new_tokens=800,
-    #     temperature=0.9
-    # )
-    # post_text = response
+    # Если Gemini не смог или отказался – делаем обычный перевод с форматированием
+    if not ai_text:
+        print("Используем fallback-перевод.")
+        post_lines = [""
+        for i, entry in enumerate(fresh_entries, 1):
+            try:
+                trans_title = TRANSLATOR.translate(entry.title)
+            except:
+                trans_title = entry.title
+            post_lines.append(f"{i}. {trans_title}")
+        ai_text = "\n".join(post_lines)
 
-    # --- Отправка ---
-    bot = Bot(token=TELEGRAM_TOKEN)
+    # Баннер
     banner = None
     background = get_background_image()
     if background:
@@ -172,11 +172,13 @@ async def main():
             pass
         banner = create_news_banner(first_title, background)
 
+    # Отправка
+    bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
-        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=post_text, parse_mode='HTML')
+        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text, parse_mode='HTML')
     else:
-        await bot.send_message(chat_id=CHAT_ID, text=post_text)
-    print("Post sent!")
+        await bot.send_message(chat_id=CHAT_ID, text=ai_text)
+    print("Пост отправлен!")
 
     save_history(history)
 
