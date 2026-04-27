@@ -1,7 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
 const REPO = 'vladevakz/crypto-news-final';
 
-// Закешированные элементы
 const $ = id => document.getElementById(id);
 
 let GH_TOKEN = localStorage.getItem('gh_token') || '';
@@ -9,12 +8,10 @@ let TG_BOT_TOKEN = localStorage.getItem('tg_bot_token') || '';
 let TG_CHAT_ID = localStorage.getItem('tg_chat_id') || '';
 let GROQ_KEY = localStorage.getItem('groq_key') || '';
 
-// Инициализация полей токенов
 if ($('gh-token-input')) $('gh-token-input').value = GH_TOKEN;
 if ($('tg-bot-token-input')) $('tg-bot-token-input').value = TG_BOT_TOKEN;
 if ($('tg-chat-id-input')) $('tg-chat-id-input').value = TG_CHAT_ID;
 if ($('groq-key-input')) $('groq-key-input').value = GROQ_KEY;
-
 if ($('settings-status')) showStatus('settings-status', '✅ Настройки загружены', 'success');
 
 // --- Переключение вкладок ---
@@ -72,7 +69,6 @@ window.checkHealth = async function() {
         results.push(r.ok ? '✅ GitHub Token валиден' : '❌ Ошибка токена');
     } catch(e) { results.push('❌ GitHub недоступен'); }
 
-    // Workflows
     try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows`, { headers: githubHeaders() });
         const d = await r.json();
@@ -158,7 +154,6 @@ async function loadFeedsUI() {
             const d = await r.json();
             feeds = JSON.parse(atob(d.content.replace(/\n/g,'')));
         } else {
-            // feeds.json нет, создадим с дефолтными
             feeds = [
                 'https://decrypt.co/feed',
                 'https://www.coindesk.com/arc/outboundfeeds/rss/',
@@ -362,7 +357,6 @@ window.downloadBackup = async function() {
     a.download = 'bot-backup.txt';
     a.click();
 };
-
 window.uploadBackup = function() {
     $('backup-file-input').click();
 };
@@ -405,7 +399,116 @@ window.updateCron = async function(wf, inputId) {
     } catch(e) { showStatus('cron-status','❌ Ошибка','error'); }
 };
 
-// Инициализация данных
+// --- AI Models ---
+async function loadModelsUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const m = JSON.parse(atob(d.content.replace(/\n/g,'')));
+            $('chat-model-select').value = m.chat || 'llama-3.3-70b-versatile';
+            $('tts-model-select').value = m.tts || 'canopylabs/orpheus-v1-english';
+            $('tts-voice-select').value = m.voice || 'hannah';
+        }
+    } catch(e) {}
+}
+window.saveAIModels = async function() {
+    if (!GH_TOKEN) return;
+    const data = {
+        chat: $('chat-model-select').value,
+        tts: $('tts-model-select').value,
+        voice: $('tts-voice-select').value
+    };
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update AI models', content: btoa(unescape(encodeURIComponent(JSON.stringify(data)))), sha })
+        });
+        showStatus('models-status','✅ Модели сохранены','success');
+    } catch(e) { showStatus('models-status','❌ Ошибка','error'); }
+};
+
+// --- MAX_NEWS ---
+async function loadMaxNewsUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const cfg = JSON.parse(atob(d.content.replace(/\n/g,'')));
+            $('max-news-input').value = cfg.MAX_NEWS || 5;
+        }
+    } catch(e) {}
+}
+window.saveMaxNews = async function() {
+    if (!GH_TOKEN) return;
+    const max = parseInt($('max-news-input').value);
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        let cfg = {};
+        if (sha) cfg = JSON.parse(atob(d.content.replace(/\n/g,'')));
+        cfg.MAX_NEWS = max;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update MAX_NEWS', content: btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))), sha })
+        });
+        showStatus('maxnews-status','✅ MAX_NEWS сохранено','success');
+    } catch(e) { showStatus('maxnews-status','❌ Ошибка','error'); }
+};
+
+// --- GitHub limits ---
+window.checkGitHubLimits = async function() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch('https://api.github.com/rate_limit', { headers: githubHeaders() });
+        const d = await r.json();
+        const core = d.resources?.core;
+        if (core) {
+            const resetDate = new Date(core.reset * 1000).toLocaleTimeString('ru-RU');
+            $('limits-output').innerHTML = `
+                Осталось: ${core.remaining} / ${core.limit} запросов<br>
+                Сброс в: ${resetDate}
+            `;
+        } else {
+            $('limits-output').textContent = 'Не удалось получить лимиты';
+        }
+    } catch(e) { $('limits-output').textContent = 'Ошибка'; }
+};
+
+// --- Error notifications ---
+async function loadErrorNotifyUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const n = JSON.parse(atob(d.content.replace(/\n/g,'')));
+            $('error-notify-checkbox').checked = n.enabled || false;
+        }
+    } catch(e) {}
+}
+window.saveErrorNotify = async function() {
+    if (!GH_TOKEN) return;
+    const enabled = $('error-notify-checkbox').checked;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update error notify', content: btoa(unescape(encodeURIComponent(JSON.stringify({enabled})))), sha })
+        });
+        showStatus('notify-status','✅ Настройка уведомлений сохранена','success');
+    } catch(e) { showStatus('notify-status','❌ Ошибка','error'); }
+};
+
+// --- Инициализация данных ---
 function initData() {
     loadRuns('post-news.yml','news-runs');
     loadRuns('reply-messages.yml','reply-runs');
@@ -418,6 +521,9 @@ function initData() {
     loadPromptUI();
     loadBlockedUI();
     loadUnsplashUI();
+    loadModelsUI();
+    loadMaxNewsUI();
+    loadErrorNotifyUI();
 }
 if (GH_TOKEN) initData();
 });
