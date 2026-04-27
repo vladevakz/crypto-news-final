@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a2e">
+    <link rel="manifest" href="manifest.json">
+    <title>Crypto News Bot Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            padding: 16px;
+            max-width: 500px;
+            margin: auto;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #ffd700;
+            text-align: center;
+        }
+        .card {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        .card h2 { font-size: 1.2rem; margin-bottom: 12px; color: #e0e0e0; }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            margin: 8px 0;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            background: #2d2d44;
+            color: #fff;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #3d3d5c; }
+        .btn.green { background: #2e7d32; }
+        .btn.green:hover { background: #3e9142; }
+        .btn.blue { background: #1565c0; }
+        .btn.blue:hover { background: #1976d2; }
+        .btn:disabled { opacity: 0.5; pointer-events: none; }
+        .status {
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin: 8px 0;
+            font-size: 0.9rem;
+        }
+        .status.success { background: #1b5e20; color: #a5d6a7; }
+        .status.error { background: #b71c1c; color: #ffcdd2; }
+        .status.info { background: #0d47a1; color: #bbdefb; }
+        .status.loading { background: #424242; color: #e0e0e0; }
+        .log-item {
+            border-bottom: 1px solid #333;
+            padding: 8px 0;
+            font-size: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .log-item .conclusion {
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .conclusion.success { background: #2e7d32; }
+        .conclusion.failure { background: #c62828; }
+        .conclusion.pending { background: #f57f17; }
+        pre {
+            background: #12121c;
+            padding: 10px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 0.8rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🚀 Crypto Bot Admin</h1>
+
+    <div class="card">
+        <h2>⚡ Управление</h2>
+        <button class="btn green" onclick="dispatchWorkflow('post-news.yml', 'post-news-btn')" id="post-news-btn">📰 Опубликовать новости</button>
+        <button class="btn blue" onclick="dispatchWorkflow('reply-messages.yml', 'reply-btn')" id="reply-btn">💬 Ответить на сообщения</button>
+        <div id="dispatch-status"></div>
+    </div>
+
+    <div class="card">
+        <h2>📰 История: Новости</h2>
+        <div id="news-runs">Загрузка...</div>
+    </div>
+
+    <div class="card">
+        <h2>💬 История: Ответы</h2>
+        <div id="reply-runs">Загрузка...</div>
+    </div>
+
+    <div class="card">
+        <h2>📄 posted.json</h2>
+        <pre id="posted-json">Загрузка...</pre>
+    </div>
+
+    <div class="card">
+        <h2>📄 update_offset.txt</h2>
+        <pre id="offset-txt">Загрузка...</pre>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
