@@ -210,9 +210,22 @@
         <div class="card">
             <h2>📦 Резервное копирование</h2>
             <button class="btn" onclick="downloadBackup()">📥 Скачать posted.json + offset.txt</button>
-            <button class="btn" onclick="uploadBackup()">📤 ₽осстановить из файла</button>
+            <button class="btn" onclick="uploadBackup()">📤 Восстановить из файла</button>
             <input type="file" id="backup-file-input" accept=".json,.txt" style="display:none">
             <div id="backup-status"></div>
+        </div>
+
+        <div class="card">
+            <h2>⏰ Ближайшие запуски</h2>
+            <button class="btn" onclick="calcNextRuns()">🔄 Рассчитать</button>
+            <div id="next-runs-output" style="font-size:0.9rem; margin-top:6px;"></div>
+        </div>
+
+        <div class="card">
+            <h2>💬 Тестовый чат с AI</h2>
+            <input type="text" id="test-chat-input" placeholder="Привет, бот!">
+            <button class="btn" onclick="testAIChat()">🤖 Спросить</button>
+            <div id="test-chat-output" style="font-size:0.9rem; margin-top:6px; white-space:pre-wrap;"></div>
         </div>
     </div>
 
