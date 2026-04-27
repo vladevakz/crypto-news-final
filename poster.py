@@ -19,6 +19,16 @@ CHAT_ID = os.environ['TELEGRAM_CHAT_ID']          # канал/чат для н�
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
 GROQ_KEY = os.environ.get('GROQ_API_KEY', None)
 
+# --- ID администраторов (игнорируем их сообщения) ---
+admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
+ADMIN_IDS = set()
+if admin_ids_str:
+    try:
+        ADMIN_IDS = set(int(uid.strip()) for uid in admin_ids_str.split(',') if uid.strip())
+    except ValueError:
+        print("Ошибка парсинга TELEGRAM_ADMIN_IDS, игнорируем параметр.")
+        ADMIN_IDS = set()
+
 # --- Настройки ---
 RSS_FEEDS = [
     'https://decrypt.co/feed',
@@ -295,7 +305,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на личные сообщения (с цитированием) --------------------
+# -------------------- Ответы на личные сообщения --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -322,6 +332,16 @@ async def reply_to_messages():
         if not msg or not msg.text and not msg.voice:
             continue
 
+        # Игнорируем сообщения от администраторов
+        if msg.from_user and msg.from_user.id in ADMIN_IDS:
+            print(f"Пропущено сообщение от админа (ID {msg.from_user.id})")
+            continue
+
+        # Игнорируем сообщения от самого бота (на всякий случай)
+        if msg.from_user and msg.from_user.is_bot:
+            print("Пропущено сообщение от бота")
+            continue
+
         user_text = None
         is_voice_message = False
 
@@ -343,7 +363,11 @@ async def reply_to_messages():
                     print(f"Распознан текст: {user_text}")
                 except Exception as e:
                     print(f"Ошибка распознавания: {e}")
-                    await bot.send_message(chat_id=msg.chat_id, text="🎧 Не смог распознать голос.", reply_to_message_id=msg.message_id)
+                    await bot.send_message(
+                        chat_id=msg.chat_id,
+                        text="🎧 Не смог распознать голос.",
+                        reply_to_message_id=msg.message_id
+                    )
                     continue
 
         if not user_text:
@@ -375,20 +399,37 @@ async def reply_to_messages():
             reply_text = response.choices[0].message.content.strip()
 
             if is_voice_message:
+                # Только голосовой ответ, без текстового дублирования
                 voice_data = generate_voice(reply_text)
                 if voice_data:
-                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
-                    # Дублируем текст под голосовым с цитированием
-                    await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
+                    await bot.send_voice(
+                        chat_id=msg.chat_id,
+                        voice=voice_data,
+                        reply_to_message_id=msg.message_id
+                    )
                 else:
-                    await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
+                    # Если синтез не удался, отправляем текст
+                    await bot.send_message(
+                        chat_id=msg.chat_id,
+                        text=reply_text,
+                        reply_to_message_id=msg.message_id
+                    )
             else:
-                await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
+                # Текстовое сообщение — текстовый ответ
+                await bot.send_message(
+                    chat_id=msg.chat_id,
+                    text=reply_text,
+                    reply_to_message_id=msg.message_id
+                )
 
             print(f"Ответ отправлен на сообщение {msg.message_id}")
         except Exception as e:
             print(f"Ошибка генерации ответа: {e}")
-            await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.", reply_to_message_id=msg.message_id)
+            await bot.send_message(
+                chat_id=msg.chat_id,
+                text="🤷‍♂️ Что-то пошло не так, попробуй позже.",
+                reply_to_message_id=msg.message_id
+            )
 
     offset += 1
     save_offset(offset)
