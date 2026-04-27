@@ -1,328 +1,423 @@
 document.addEventListener('DOMContentLoaded', () => {
-
 const REPO = 'vladevakz/crypto-news-final';
 
-// Элементы
-const ghTokenInput = document.getElementById('gh-token-input');
-const tgBotTokenInput = document.getElementById('tg-bot-token-input');
-const tgChatIdInput = document.getElementById('tg-chat-id-input');
-const groqKeyInput = document.getElementById('groq-key-input');
-const settingsStatus = document.getElementById('settings-status');
-const dispatchStatus = document.getElementById('dispatch-status');
-const newsRuns = document.getElementById('news-runs');
-const replyRuns = document.getElementById('reply-runs');
-const postedJson = document.getElementById('posted-json');
-const offsetTxt = document.getElementById('offset-txt');
-const healthStatus = document.getElementById('health-status');
-const logsOutput = document.getElementById('logs-output');
-const resetStatus = document.getElementById('reset-status');
-const testMsgStatus = document.getElementById('test-msg-status');
-const groqStatsOutput = document.getElementById('groq-stats-output');
-const newsCronInput = document.getElementById('news-cron');
-const replyCronInput = document.getElementById('reply-cron');
+// Закешированные элементы
+const $ = id => document.getElementById(id);
 
-// Загрузка сохранённых значений
 let GH_TOKEN = localStorage.getItem('gh_token') || '';
 let TG_BOT_TOKEN = localStorage.getItem('tg_bot_token') || '';
 let TG_CHAT_ID = localStorage.getItem('tg_chat_id') || '';
 let GROQ_KEY = localStorage.getItem('groq_key') || '';
 
-// Заполняем поля
-if (ghTokenInput) ghTokenInput.value = GH_TOKEN;
-if (tgBotTokenInput) tgBotTokenInput.value = TG_BOT_TOKEN;
-if (tgChatIdInput) tgChatIdInput.value = TG_CHAT_ID;
-if (groqKeyInput) groqKeyInput.value = GROQ_KEY;
+// Инициализация полей токенов
+if ($('gh-token-input')) $('gh-token-input').value = GH_TOKEN;
+if ($('tg-bot-token-input')) $('tg-bot-token-input').value = TG_BOT_TOKEN;
+if ($('tg-chat-id-input')) $('tg-chat-id-input').value = TG_CHAT_ID;
+if ($('groq-key-input')) $('groq-key-input').value = GROQ_KEY;
 
-// Показываем, что настройки загружены
-showStatus('settings-status', '✅ Настройки загружены', 'success');
+if ($('settings-status')) showStatus('settings-status', '✅ Настройки загружены', 'success');
 
-function showStatus(elementId, message, type) {
-    const el = document.getElementById(elementId);
-    if (el) el.innerHTML = `<div class="status ${type}">${message}</div>`;
-}
-
-// Сохранение настроек
-window.saveSettings = function() {
-    GH_TOKEN = ghTokenInput.value.trim();
-    TG_BOT_TOKEN = tgBotTokenInput.value.trim();
-    TG_CHAT_ID = tgChatIdInput.value.trim();
-    GROQ_KEY = groqKeyInput.value.trim();
-
-    if (GH_TOKEN) localStorage.setItem('gh_token', GH_TOKEN);
-    if (TG_BOT_TOKEN) localStorage.setItem('tg_bot_token', TG_BOT_TOKEN);
-    if (TG_CHAT_ID) localStorage.setItem('tg_chat_id', TG_CHAT_ID);
-    if (GROQ_KEY) localStorage.setItem('groq_key', GROQ_KEY);
-
-    showStatus('settings-status', '💾 Настройки сохранены', 'success');
-    // Автоматически перезагружаем историю, если токен был изменён
-    if (GH_TOKEN) {
-        loadRuns('post-news.yml', 'news-runs');
-        loadRuns('reply-messages.yml', 'reply-runs');
-        loadFile('posted.json', 'posted-json');
-        loadFile('update_offset.txt', 'offset-txt');
-    }
+// --- Переключение вкладок ---
+window.switchTab = function(tabName) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    $(`tab-${tabName}`).classList.add('active');
+    event.target.classList.add('active');
 };
 
-// GitHub API хелпер
+// --- Вспомогательные функции ---
+function showStatus(elementId, message, type) {
+    const el = $(elementId); if (!el) return;
+    el.innerHTML = `<div class="status ${type}">${message}</div>`;
+}
 function githubHeaders() {
-    return {
-        'Authorization': `token ${GH_TOKEN}`,
-        'Accept': 'application/vnd.github+json'
-    };
+    return { 'Authorization': `token ${GH_TOKEN}`, 'Accept': 'application/vnd.github+json' };
 }
 
-// Запуск workflow
+// --- Сохранение токенов ---
+window.saveSettings = function() {
+    GH_TOKEN = $('gh-token-input').value.trim();
+    TG_BOT_TOKEN = $('tg-bot-token-input').value.trim();
+    TG_CHAT_ID = $('tg-chat-id-input').value.trim();
+    GROQ_KEY = $('groq-key-input').value.trim();
+    ['gh_token','tg_bot_token','tg_chat_id','groq_key'].forEach((k,i) => {
+        const v = [GH_TOKEN,TG_BOT_TOKEN,TG_CHAT_ID,GROQ_KEY][i];
+        if (v) localStorage.setItem(k, v);
+    });
+    showStatus('settings-status', '💾 Настройки сохранены', 'success');
+    if (GH_TOKEN) initData();
+};
+
+// --- Запуск workflow ---
 window.dispatchWorkflow = async function(workflowFile, btnId) {
-    if (!GH_TOKEN) return alert('Введите GitHub Token и нажмите «Сохранить»');
-    const btn = document.getElementById(btnId);
-    if (!btn) return;
+    if (!GH_TOKEN) return alert('Введите GitHub Token');
+    const btn = $(btnId); if (!btn) return;
     btn.disabled = true;
     try {
         const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${workflowFile}/dispatches`, {
-            method: 'POST',
-            headers: githubHeaders(),
-            body: JSON.stringify({ ref: 'main' })
+            method: 'POST', headers: githubHeaders(), body: JSON.stringify({ ref: 'main' })
         });
-        if (res.ok) {
-            showStatus('dispatch-status', '✅ Workflow запущен!', 'success');
-        } else {
-            const err = await res.json();
-            showStatus('dispatch-status', `❌ Ошибка: ${err.message}`, 'error');
-        }
-    } catch(e) {
-        showStatus('dispatch-status', `❌ Сетевая ошибка: ${e.message}`, 'error');
-    }
+        const msg = res.ok ? '✅ Workflow запущен!' : `❌ Ошибка: ${(await res.json()).message}`;
+        showStatus('dispatch-status', msg, res.ok?'success':'error');
+    } catch(e) { showStatus('dispatch-status', '❌ Сетевая ошибка', 'error'); }
     btn.disabled = false;
-    setTimeout(() => {
-        const el = document.getElementById('dispatch-status');
-        if (el) el.innerHTML = '';
-    }, 5000);
 };
 
-// История запусков
-async function loadRuns(workflowFile, elementId) {
-    if (!GH_TOKEN) return;
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    try {
-        const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${workflowFile}/runs?per_page=5`, { headers: githubHeaders() });
-        const data = await res.json();
-        if (data.workflow_runs) {
-            let html = '';
-            data.workflow_runs.forEach(run => {
-                const date = new Date(run.created_at).toLocaleString('ru-RU');
-                const conclusion = run.conclusion || 'pending';
-                html += `<div class="log-item">
-                    <span>${date}</span>
-                    <span class="conclusion ${conclusion}">${conclusion}</span>
-                </div>`;
-            });
-            el.innerHTML = html || 'Нет запусков';
-        }
-    } catch(e) {
-        el.innerHTML = 'Ошибка загрузки';
-    }
-}
-
-// Загрузка файлов
-async function loadFile(path, elementId) {
-    if (!GH_TOKEN) return;
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    try {
-        const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
-        const data = await res.json();
-        if (data.content) {
-            const content = atob(data.content.replace(/\n/g, ''));
-            el.textContent = content;
-        } else {
-            el.textContent = 'Пусто или ошибка';
-        }
-    } catch(e) {
-        el.textContent = 'Ошибка загрузки';
-    }
-}
-
-// Проверка системы
+// --- Проверка системы ---
 window.checkHealth = async function() {
-    if (!GH_TOKEN) return alert('Введите GitHub Token');
-    const statusDiv = document.getElementById('health-status');
-    if (!statusDiv) return;
-    statusDiv.innerHTML = '<div class="status loading">⏳ Проверка...</div>';
+    if (!GH_TOKEN) return alert('Токен GitHub не введён');
     const results = [];
-
     try {
-        const userRes = await fetch('https://api.github.com/user', { headers: githubHeaders() });
-        if (userRes.ok) results.push('✅ GitHub Token валиден');
-        else results.push('❌ Ошибка GitHub Token: ' + (await userRes.json()).message);
-    } catch(e) { results.push('❌ Сеть / GitHub недоступен'); }
+        const r = await fetch('https://api.github.com/user', { headers: githubHeaders() });
+        results.push(r.ok ? '✅ GitHub Token валиден' : '❌ Ошибка токена');
+    } catch(e) { results.push('❌ GitHub недоступен'); }
 
+    // Workflows
     try {
-        const wfRes = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows`, { headers: githubHeaders() });
-        const wfData = await wfRes.json();
-        if (wfData.workflows) {
-            const names = wfData.workflows.map(w => w.name);
-            results.push(names.includes('Post News') ? '✅ Workflow "Post News" найден' : '❌ "Post News" отсутствует');
-            results.push(names.includes('Reply to Messages') ? '✅ Workflow "Reply to Messages" найден' : '❌ "Reply to Messages" отсутствует');
-        } else results.push('❌ Не удалось получить список workflows');
+        const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows`, { headers: githubHeaders() });
+        const d = await r.json();
+        if (d.workflows) {
+            const names = d.workflows.map(w=>w.name);
+            results.push(names.includes('Post News') ? '✅ "Post News" есть' : '❌ "Post News" нет');
+            results.push(names.includes('Reply to Messages') ? '✅ "Reply to Messages" есть' : '❌ "Reply to Messages" нет');
+        }
     } catch(e) { results.push('❌ Ошибка получения workflows'); }
 
     if (GROQ_KEY) {
         try {
-            const groqRes = await fetch('https://api.groq.com/openai/v1/models', {
-                headers: { 'Authorization': `Bearer ${GROQ_KEY}` }
-            });
-            results.push(groqRes.ok ? '✅ Groq API доступен' : '❌ Groq API ошибка');
-        } catch(e) { results.push('❌ Groq API сеть недоступна'); }
+            const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: `Bearer ${GROQ_KEY}` } });
+            results.push(r.ok ? '✅ Groq API доступен' : '❌ Ошибка Groq');
+        } catch(e) { results.push('❌ Groq сеть'); }
     } else results.push('⚠️ Groq Key не введён');
 
-    for (const f of ['posted.json', 'update_offset.txt']) {
+    for (const f of ['posted.json','update_offset.txt','feeds.json','prompt.json']) {
         try {
-            const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${f}`, { headers: githubHeaders() });
-            results.push(res.ok ? `✅ ${f} доступен` : `❌ ${f} не найден`);
-        } catch(e) { results.push(`❌ Ошибка доступа к ${f}`); }
+            const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${f}`, { headers: githubHeaders() });
+            results.push(r.ok ? `✅ ${f}` : `❌ ${f} не найден`);
+        } catch(e) { results.push(`❌ ${f} ошибка`); }
     }
 
     const allOk = results.every(r => r.startsWith('✅') || r.startsWith('⚠️'));
-    statusDiv.innerHTML = results.map(r => `<div>${r}</div>`).join('') +
-        `<div style="margin-top:8px;font-weight:bold;">${allOk ? '✅ Все системы работают' : '❌ Обнаружены проблемы'}</div>`;
+    if ($('health-status')) $('health-status').innerHTML = results.join('<br>') + `<br><b>${allOk?'✅ Всё работает':'❌ Есть проблемы'}</b>`;
 };
 
-// Обновление cron
-window.updateCron = async function(workflowFile, inputId) {
-    if (!GH_TOKEN) return alert('Введите GitHub Token');
-    const inputEl = document.getElementById(inputId);
-    if (!inputEl) return;
-    const newCron = inputEl.value.trim();
+// --- Статистика новостей ---
+async function loadNewsStats() {
+    if (!GH_TOKEN) return;
     try {
-        const path = `.github/workflows/${workflowFile}`;
-        const getRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
-        const data = await getRes.json();
-        if (!data.content) return alert('Файл не найден');
-        let content = atob(data.content.replace(/\n/g, ''));
-        content = content.replace(/cron:\s*'[^']+'/, `cron: '${newCron}'`);
-        const encoded = btoa(unescape(encodeURIComponent(content)));
-        const putRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
-            method: 'PUT',
-            headers: githubHeaders(),
-            body: JSON.stringify({
-                message: `Update cron for ${workflowFile}`,
-                content: encoded,
-                sha: data.sha
-            })
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/posted.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        if (!d.content) return;
+        const posted = JSON.parse(atob(d.content.replace(/\n/g,'')));
+        const today = new Date().toISOString().slice(0,10);
+        let todayCount = 0, weekCount = 0;
+        const weekAgo = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+        Object.entries(posted).forEach(([date, titles]) => {
+            if (date === today) todayCount = titles.length;
+            if (date >= weekAgo) weekCount += titles.length;
         });
-        if (putRes.ok) {
-            showStatus('dispatch-status', `✅ Расписание ${workflowFile} обновлено`, 'success');
-        } else {
-            const err = await putRes.json();
-            showStatus('dispatch-status', `❌ Ошибка: ${err.message}`, 'error');
-        }
-    } catch(e) {
-        showStatus('dispatch-status', `❌ Сетевая ошибка: ${e.message}`, 'error');
-    }
-};
-
-// Логи последнего запуска
-window.viewLatestLogs = async function() {
-    if (!GH_TOKEN) return alert('Введите GitHub Token');
-    try {
-        const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/reply-messages.yml/runs?per_page=1`, {
-            headers: githubHeaders()
-        });
-        const data = await res.json();
-        if (data.workflow_runs && data.workflow_runs.length > 0) {
-            const run = data.workflow_runs[0];
-            const htmlUrl = run.html_url;
-            const conclusion = run.conclusion || 'pending';
-            logsOutput.innerHTML = `
-                <p>Последний запуск: ${conclusion}</p>
-                <a href="${htmlUrl}" target="_blank">Открыть в GitHub</a>
-            `;
-        } else {
-            logsOutput.innerHTML = 'Нет запусков';
-        }
-    } catch(e) {
-        logsOutput.innerHTML = 'Ошибка';
-    }
-};
-
-// Сброс истории
-window.resetHistory = async function() {
-    if (!GH_TOKEN) return alert('Введите GitHub Token');
-    const files = {
-        'posted.json': '{}',
-        'update_offset.txt': '0'
-    };
-    for (const [path, content] of Object.entries(files)) {
-        try {
-            const getRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
-            const data = await getRes.json();
-            if (!data.sha) continue;
-            const encoded = btoa(unescape(encodeURIComponent(content)));
-            await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
-                method: 'PUT',
-                headers: githubHeaders(),
-                body: JSON.stringify({
-                    message: `Reset ${path}`,
-                    content: encoded,
-                    sha: data.sha
-                })
-            });
-        } catch(e) { console.error(e); }
-    }
-    showStatus('reset-status', '✅ История сброшена', 'success');
-    loadFile('posted.json', 'posted-json');
-    loadFile('update_offset.txt', 'offset-txt');
-};
-
-// Тестовое сообщение
-window.testMessage = async function() {
-    if (!TG_BOT_TOKEN || !TG_CHAT_ID) return alert('Введите Telegram Bot Token и Chat ID в настройках');
-    try {
-        const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TG_CHAT_ID,
-                text: '🧪 Тестовое сообщение из админки. Всё работает!'
-            })
-        });
-        const data = await res.json();
-        if (data.ok) {
-            showStatus('test-msg-status', '✅ Сообщение отправлено', 'success');
-        } else {
-            showStatus('test-msg-status', `❌ Ошибка: ${data.description}`, 'error');
-        }
-    } catch(e) {
-        showStatus('test-msg-status', '❌ Ошибка сети', 'error');
-    }
-};
-
-// Статистика Groq
-window.groqStats = async function() {
-    if (!GROQ_KEY) return alert('Введите Groq API Key');
-    try {
-        const res = await fetch('https://api.groq.com/openai/v1/models', {
-            headers: { 'Authorization': `Bearer ${GROQ_KEY}` }
-        });
-        const data = await res.json();
-        if (data.data) {
-            const models = data.data.map(m => m.id).join(', ');
-            groqStatsOutput.textContent = `Доступные модели: ${models}`;
-        } else {
-            groqStatsOutput.textContent = 'Ошибка получения моделей';
-        }
-    } catch(e) {
-        groqStatsOutput.textContent = 'Ошибка сети';
-    }
-};
-
-// Первоначальная загрузка истории, если токен уже есть
-if (GH_TOKEN) {
-    loadRuns('post-news.yml', 'news-runs');
-    loadRuns('reply-messages.yml', 'reply-runs');
-    loadFile('posted.json', 'posted-json');
-    loadFile('update_offset.txt', 'offset-txt');
+        if ($('news-stats')) $('news-stats').innerHTML = `Сегодня: ${todayCount} новостей<br>За неделю: ${weekCount} новостей`;
+    } catch(e) { if ($('news-stats')) $('news-stats').textContent = 'Ошибка'; }
 }
 
-}); // конец DOMContentLoaded
+// История запусков
+async function loadRuns(workflowFile, elId) {
+    if (!GH_TOKEN) return;
+    const el = $(elId); if (!el) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${workflowFile}/runs?per_page=5`, { headers: githubHeaders() });
+        const d = await r.json();
+        if (d.workflow_runs) {
+            el.innerHTML = d.workflow_runs.map(r => {
+                const dt = new Date(r.created_at).toLocaleString('ru-RU');
+                const cls = r.conclusion || 'pending';
+                return `<div class="log-item"><span>${dt}</span><span class="conclusion ${cls}">${cls}</span></div>`;
+            }).join('');
+        }
+    } catch(e) { el.innerHTML = 'Ошибка'; }
+}
+
+// Загрузка файлов
+async function loadFile(path, elId) {
+    if (!GH_TOKEN) return;
+    const el = $(elId); if (!el) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
+        const d = await r.json();
+        if (d.content) el.textContent = atob(d.content.replace(/\n/g,''));
+    } catch(e) { el.textContent = 'Ошибка'; }
+}
+
+// --- RSS-источники ---
+async function loadFeedsUI() {
+    if (!GH_TOKEN) return;
+    try {
+        let feeds = [];
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            feeds = JSON.parse(atob(d.content.replace(/\n/g,'')));
+        } else {
+            // feeds.json нет, создадим с дефолтными
+            feeds = [
+                'https://decrypt.co/feed',
+                'https://www.coindesk.com/arc/outboundfeeds/rss/',
+                'https://cointelegraph.com/rss',
+                'https://www.cnbc.com/id/10001147/device/rss/rss.html'
+            ];
+        }
+        const div = $('feeds-list');
+        div.innerHTML = feeds.map((f,i) => `<div class="feed-item"><input value="${f}" data-index="${i}"><button onclick="deleteFeed(${i})">❌</button></div>`).join('');
+        window._feedsData = feeds;
+    } catch(e) { $('feeds-list').innerHTML = 'Ошибка'; }
+}
+window.addFeed = function() {
+    const input = $('new-feed-input');
+    if (!input.value) return;
+    if (!window._feedsData) window._feedsData = [];
+    window._feedsData.push(input.value);
+    input.value = '';
+    loadFeedsUI();
+};
+window.deleteFeed = function(index) {
+    window._feedsData.splice(index,1);
+    loadFeedsUI();
+};
+window.saveFeeds = async function() {
+    if (!GH_TOKEN || !window._feedsData) return;
+    const content = JSON.stringify(window._feedsData, null, 2);
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update feeds', content: btoa(unescape(encodeURIComponent(content))), sha })
+        });
+        alert('Feeds сохранены');
+    } catch(e) { alert('Ошибка сохранения'); }
+};
+
+// --- Промпт ---
+async function loadPromptUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const prompt = JSON.parse(atob(d.content.replace(/\n/g,'')));
+            $('system-prompt-input').value = prompt.system_prompt || '';
+        }
+    } catch(e) {}
+}
+window.savePrompt = async function() {
+    if (!GH_TOKEN) return;
+    const content = JSON.stringify({ system_prompt: $('system-prompt-input').value });
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update prompt', content: btoa(unescape(encodeURIComponent(content))), sha })
+        });
+        showStatus('prompt-status','✅ Промпт сохранён','success');
+    } catch(e) { showStatus('prompt-status','❌ Ошибка','error'); }
+};
+
+// --- Блокированные слова ---
+async function loadBlockedUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/blocked.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const blocked = JSON.parse(atob(d.content.replace(/\n/g,'')));
+            $('blocked-input').value = blocked.join(', ');
+        }
+    } catch(e) {}
+}
+window.saveBlocked = async function() {
+    if (!GH_TOKEN) return;
+    const words = $('blocked-input').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const content = JSON.stringify(words);
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/blocked.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/blocked.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update blocked words', content: btoa(unescape(encodeURIComponent(content))), sha })
+        });
+        showStatus('blocked-status','✅ Список сохранён','success');
+    } catch(e) { showStatus('blocked-status','❌ Ошибка','error'); }
+};
+
+// --- Unsplash query ---
+async function loadUnsplashUI() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, { headers: githubHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const q = JSON.parse(atob(d.content.replace(/\n/g,''))).query;
+            $('unsplash-query-input').value = q;
+        }
+    } catch(e) {}
+}
+window.saveUnsplashQuery = async function() {
+    if (!GH_TOKEN) return;
+    const content = JSON.stringify({ query: $('unsplash-query-input').value });
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, { headers: githubHeaders() });
+        const d = await r.json();
+        const sha = d.sha || null;
+        await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: 'Update unsplash query', content: btoa(unescape(encodeURIComponent(content))), sha })
+        });
+        showStatus('unsplash-status','✅ Запрос сохранён','success');
+    } catch(e) { showStatus('unsplash-status','❌ Ошибка','error'); }
+};
+
+// --- Отправка кастомного сообщения ---
+window.sendCustomMessage = async function() {
+    if (!TG_BOT_TOKEN || !TG_CHAT_ID) return alert('Введите токены Telegram');
+    const text = $('custom-msg-text').value;
+    try {
+        const r = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TG_CHAT_ID, text })
+        });
+        const d = await r.json();
+        showStatus('custom-msg-status', d.ok ? '✅ Отправлено' : `❌ ${d.description}`, d.ok?'success':'error');
+    } catch(e) { showStatus('custom-msg-status','❌ Ошибка сети','error'); }
+};
+
+// --- Логи последнего запуска ---
+window.viewLatestLogs = async function() {
+    if (!GH_TOKEN) return;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/reply-messages.yml/runs?per_page=1`, { headers: githubHeaders() });
+        const d = await r.json();
+        if (d.workflow_runs?.[0]) {
+            $('logs-output').innerHTML = `<a href="${d.workflow_runs[0].html_url}" target="_blank">Открыть в GitHub</a>`;
+        } else $('logs-output').textContent = 'Нет запусков';
+    } catch(e) { $('logs-output').textContent = 'Ошибка'; }
+};
+
+// --- Последние сообщения ---
+window.loadRecentMessages = async function() {
+    if (!TG_BOT_TOKEN) return alert('Нужен токен бота');
+    try {
+        const offset = localStorage.getItem('last_msg_offset') || 0;
+        const r = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getUpdates?offset=${offset}&limit=5`);
+        const d = await r.json();
+        if (d.ok && d.result.length) {
+            let html = '';
+            d.result.forEach(u => {
+                const msg = u.message || u.edited_message;
+                if (msg && msg.text) {
+                    html += `<div class="log-item"><span>${msg.from?.first_name||'?'}: ${msg.text.slice(0,40)}</span></div>`;
+                }
+            });
+            $('recent-messages').innerHTML = html || 'Нет текстовых';
+            const maxId = Math.max(...d.result.map(u=>u.update_id));
+            localStorage.setItem('last_msg_offset', maxId+1);
+        } else $('recent-messages').textContent = 'Нет новых сообщений';
+    } catch(e) { $('recent-messages').textContent = 'Ошибка'; }
+};
+
+// --- Сброс истории ---
+window.resetHistory = async function() {
+    if (!GH_TOKEN) return;
+    for (const [path, content] of [['posted.json','{}'],['update_offset.txt','0']]) {
+        try {
+            const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
+            const d = await r.json();
+            await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
+                method: 'PUT', headers: githubHeaders(),
+                body: JSON.stringify({ message: `Reset ${path}`, content: btoa(unescape(encodeURIComponent(content))), sha: d.sha })
+            });
+        } catch(e) {}
+    }
+    showStatus('reset-status','✅ История сброшена','success');
+    initData();
+};
+
+// --- Резервное копирование ---
+window.downloadBackup = async function() {
+    const files = ['posted.json','update_offset.txt'];
+    let zip = '';
+    for (const f of files) {
+        try {
+            const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${f}`, { headers: githubHeaders() });
+            const d = await r.json();
+            if (d.content) zip += `=== ${f} ===\n` + atob(d.content.replace(/\n/g,'')) + '\n\n';
+        } catch(e) {}
+    }
+    const blob = new Blob([zip], {type:'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'bot-backup.txt';
+    a.click();
+};
+
+window.uploadBackup = function() {
+    $('backup-file-input').click();
+};
+$('backup-file-input').addEventListener('change', async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const parts = text.split(/=== (.+?) ===\n/);
+    for (let i=1; i<parts.length; i+=2) {
+        const filename = parts[i];
+        const content = parts[i+1].trim();
+        try {
+            const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${filename}`, { headers: githubHeaders() });
+            const d = await r.json();
+            await fetch(`https://api.github.com/repos/${REPO}/contents/${filename}`, {
+                method: 'PUT', headers: githubHeaders(),
+                body: JSON.stringify({ message: `Restore ${filename}`, content: btoa(unescape(encodeURIComponent(content))), sha: d.sha })
+            });
+        } catch(e) {}
+    }
+    showStatus('backup-status','✅ Восстановлено','success');
+    initData();
+});
+
+// --- Обновление cron ---
+window.updateCron = async function(wf, inputId) {
+    if (!GH_TOKEN) return;
+    const newCron = $(inputId).value;
+    try {
+        const path = `.github/workflows/${wf}`;
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
+        const d = await r.json();
+        let content = atob(d.content.replace(/\n/g,''));
+        content = content.replace(/cron:\s*'[^']+'/, `cron: '${newCron}'`);
+        await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
+            method: 'PUT', headers: githubHeaders(),
+            body: JSON.stringify({ message: `Update cron ${wf}`, content: btoa(unescape(encodeURIComponent(content))), sha: d.sha })
+        });
+        showStatus('cron-status', `✅ ${wf} обновлён`, 'success');
+    } catch(e) { showStatus('cron-status','❌ Ошибка','error'); }
+};
+
+// Инициализация данных
+function initData() {
+    loadRuns('post-news.yml','news-runs');
+    loadRuns('reply-messages.yml','reply-runs');
+    loadFile('posted.json','posted-json');
+    loadFile('update_offset.txt','offset-txt');
+    loadFile('feeds.json','feeds-json');
+    loadFile('prompt.json','prompt-json');
+    loadNewsStats();
+    loadFeedsUI();
+    loadPromptUI();
+    loadBlockedUI();
+    loadUnsplashUI();
+}
+if (GH_TOKEN) initData();
+});
