@@ -22,7 +22,7 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'  # наш жирный шрифт (должен лежать в корне)
+FONT_PATH = 'Roboto-Bold.ttf'  # если загрузите жирный шрифт в корень; иначе будет DejaVu Sans Bold
 
 # Инициализация Gemini
 genai.configure(api_key=GEMINI_KEY)
@@ -50,7 +50,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Функции картинок (с Font fallback) ---
+# --- Функции картинок (с fallback-шрифтом) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -152,7 +152,7 @@ async def main():
     # Если Gemini не смог или отказался – делаем обычный перевод с форматированием
     if not ai_text:
         print("Используем fallback-перевод.")
-        post_lines = [""
+        post_lines = [""]  # <-- Вот так правильно, с закрытой скобкой
         for i, entry in enumerate(fresh_entries, 1):
             try:
                 trans_title = TRANSLATOR.translate(entry.title)
