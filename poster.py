@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-from huggingface_hub import InferenceClient
+from openai import OpenAI
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-HF_TOKEN = os.environ.get('HF_TOKEN', None)
+YANDEX_KEY = os.environ.get('YANDEX_API_KEY', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,15 +22,18 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'
 
-# Инициализация Hugging Face
-hf_client = None
-if HF_TOKEN:
-    print("Hugging Face: ключ найден, создаю клиента.")
-    hf_client = InferenceClient(token=HF_TOKEN)
+# Инициализация YandexGPT
+if YANDEX_KEY:
+    print("Yandex: ключ найден, создаю клиента.")
+    client = OpenAI(
+        api_key=YANDEX_KEY,
+        base_url="https://api.cloud.yandex.net/foundation-models/v1"
+    )
 else:
-    print("Hugging Face: ключ НЕ найден, ИИ не будет использоваться.")
+    print("Yandex: ключ НЕ найден, ИИ не будет использоваться.")
+    client = None
 
 # --- Функции истории ---
 def load_history():
@@ -55,7 +58,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки (крупный шрифт 60pt) ---
+# --- Картинки ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -131,9 +134,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к Hugging Face (перебор моделей) ---
+    # --- Запрос к YandexGPT ---
     ai_text = None
-    if hf_client:
+    if client:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -143,32 +146,21 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        # Пробуем несколько надёжных моделей
-        models_to_try = [
-            "google/flan-t5-large",               # меньше 1 млрд параметров, всегда бесплатна
-            "mistralai/Mistral-7B-Instruct-v0.1", # популярная, может быть под квотой
-            "facebook/bart-large-cnn"             # запасная
-        ]
-        for model_name in models_to_try:
+        for model_name in ["yandexgpt/latest", "yandexgpt-lite/latest"]:
             try:
                 print(f"Пробую модель {model_name}...")
-                response = hf_client.text_generation(
-                    prompt,
+                response = client.chat.completions.create(
                     model=model_name,
-                    max_new_tokens=600,
+                    messages=[{"role": "user", "content": prompt}],
                     temperature=0.9,
-                    do_sample=True,
-                    top_p=0.95,
-                    repetition_penalty=1.1
+                    max_tokens=800
                 )
-                # Ответ может быть строкой или объектом
-                text = response if isinstance(response, str) else str(response)
-                if text and len(text.strip()) > 10:
-                    ai_text = text.strip()
-                    print(f"Модель {model_name} вернула текст.")
+                ai_text = response.choices[0].message.content.strip()
+                if ai_text and len(ai_text) > 15:
+                    print(f"YandexGPT ({model_name}) сгенерировал пост.")
                     break
                 else:
-                    print(f"Модель {model_name} вернула пустой ответ.")
+                    print(f"Модель {model_name} вернула пустой или слишком короткий ответ.")
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
                 continue
