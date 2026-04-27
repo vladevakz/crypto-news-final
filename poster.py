@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-import google.generativeai as genai
+import cohere
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-GEMINI_KEY = os.environ.get('GEMINI_APT_KEY', None)   # ← исправлено под ваш секрет
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
+COHERE_KEY = os.environ.get('COHERE_APT_KEY', None)   # ← теперь ищет ваш секрет
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,14 +22,15 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'
+FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
 
-# Инициализация Gemini
-if GEMINI_KEY:
-    print("Gemini: ключ найден.")
-    genai.configure(api_key=GEMINI_KEY)
+# Инициализация Cohere
+if COHERE_KEY:
+    print("Cohere: ключ найден, создаю клиента.")
+    co = cohere.Client(COHERE_KEY)
 else:
-    print("Gemini: ключ НЕ найден, ИИ не будет использоваться.")
+    print("Cohere: ключ НЕ найден, ИИ не будет использоваться.")
+    co = None
 
 # --- Функции истории ---
 def load_history():
@@ -54,7 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки (крупный шрифт 60pt) ---
+# --- Картинки (крупный шрифт 60pt, обводка для контраста) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -80,6 +81,7 @@ def create_news_banner(news_title, background_bytes):
         else:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
 
+        # Полупрозрачная плашка
         overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 180))
         image.paste(overlay, (0, 500), overlay)
 
@@ -96,8 +98,12 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
+        # Рисуем с обводкой для контраста
         y = 530
         for line in lines:
+            # черная обводка
+            draw.text((40, y), line, font=font, fill="black", stroke_width=4, stroke_fill="black")
+            # белый текст поверх
             draw.text((40, y), line, font=font, fill="white")
             y += 70
 
@@ -130,9 +136,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к Gemini (перебор моделей) ---
+    # --- Запрос к Cohere ---
     ai_text = None
-    if GEMINI_KEY:
+    if co:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -142,18 +148,17 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
-        for model_name in models_to_try:
-            try:
-                print(f"Пробую модель {model_name}...")
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
-                ai_text = response.text.strip()
-                print(f"Gemini ({model_name}) сгенерировал пост.")
-                break
-            except Exception as e:
-                print(f"Ошибка Gemini ({model_name}): {type(e).__name__}: {e}")
-                continue
+        try:
+            response = co.generate(
+                model='command-r',
+                prompt=prompt,
+                max_tokens=800,
+                temperature=0.9
+            )
+            ai_text = response.generations[0].text.strip()
+            print("Cohere сгенерировал пост.")
+        except Exception as e:
+            print(f"Ошибка Cohere: {type(e).__name__}: {e}")
 
     # --- Fallback без дублирования ---
     if not ai_text:
