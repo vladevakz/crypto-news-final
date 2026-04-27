@@ -295,7 +295,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на личные сообщения --------------------
+# -------------------- Ответы на личные сообщения (с цитированием) --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -343,7 +343,7 @@ async def reply_to_messages():
                     print(f"Распознан текст: {user_text}")
                 except Exception as e:
                     print(f"Ошибка распознавания: {e}")
-                    await bot.send_message(chat_id=msg.chat_id, text="🎧 Не смог распознать голос.")
+                    await bot.send_message(chat_id=msg.chat_id, text="🎧 Не смог распознать голос.", reply_to_message_id=msg.message_id)
                     continue
 
         if not user_text:
@@ -375,21 +375,20 @@ async def reply_to_messages():
             reply_text = response.choices[0].message.content.strip()
 
             if is_voice_message:
-                # Отвечаем голосом + текст
                 voice_data = generate_voice(reply_text)
                 if voice_data:
-                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data)
-                    # Дублируем текст под голосовым
-                    await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
+                    # Дублируем текст под голосовым с цитированием
+                    await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
                 else:
-                    await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+                    await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
             else:
-                await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+                await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
 
             print(f"Ответ отправлен на сообщение {msg.message_id}")
         except Exception as e:
             print(f"Ошибка генерации ответа: {e}")
-            await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.")
+            await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.", reply_to_message_id=msg.message_id)
 
     offset += 1
     save_offset(offset)
