@@ -10,7 +10,7 @@ from telegram import Bot
 import asyncio
 from openai import OpenAI
 
-# --- Переменные окружения ---
+# --- Переменные окружения (секреты GitHub) ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
@@ -21,8 +21,7 @@ RSS_FEEDS = [
     'https://decrypt.co/feed',
     'https://www.coindesk.com/arc/outboundfeeds/rss/',
     'https://cointelegraph.com/rss',
-    'https://www.cnbc.com/id/10001147/device/rss/rss.html'  # экономика
-    # Можете добавить другие блоги или новостные сайты
+    'https://www.cnbc.com/id/10001147/device/rss/rss.html'
 ]
 
 # --- Настройки ---
@@ -40,7 +39,7 @@ else:
     print("Groq: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
-# --- Функции истории ---
+# --- Функции для истории (чтобы не повторяться) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -65,7 +64,6 @@ def filter_fresh_entries(entries, history):
 
 # --- Сбор и отбор популярных новостей ---
 def fetch_all_feeds():
-    """Собирает записи из всех RSS-лент, удаляет дубликаты, возвращает топ MAX_NEWS свежих."""
     all_entries = []
     seen_urls = set()
 
@@ -81,7 +79,6 @@ def fetch_all_feeds():
         except Exception as e:
             print(f"Ошибка при парсинге {url}: {e}")
 
-    # Сортируем по дате публикации (новые первыми)
     def get_pub_date(entry):
         try:
             return datetime(*entry.published_parsed[:6])
@@ -91,7 +88,7 @@ def fetch_all_feeds():
     all_entries.sort(key=get_pub_date, reverse=True)
     return all_entries[:MAX_NEWS]
 
-# --- Картинки (баннер с поднятым текстом) ---
+# --- Картинки (баннер с динамической плашкой и отступами) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -117,10 +114,6 @@ def create_news_banner(news_title, background_bytes):
         else:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
 
-        # Плашка ещё выше (начинается с y=400)
-        overlay = Image.new('RGBA', (1280, 260), (0, 0, 0, 180))
-        image.paste(overlay, (0, 400), overlay)
-
         max_width = 1200
         words = news_title.split()
         lines = []
@@ -134,13 +127,28 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        # Текст начинается с y=430
-        y = 430
+        # Параметры плашки
+        line_height = 80
+        padding_top = 30
+        padding_bottom = 30
+        total_text_height = line_height * len(lines)
+        overlay_height = total_text_height + padding_top + padding_bottom
+
+        # Плашка внизу, с отступом 20px от края
+        overlay_y = 720 - overlay_height - 20
+        if overlay_y < 0:
+            overlay_y = 0
+
+        overlay = Image.new('RGBA', (1280, overlay_height), (0, 0, 0, 180))
+        image.paste(overlay, (0, overlay_y), overlay)
+
+        # Рисуем текст внутри плашки
+        y = overlay_y + padding_top
         stroke_width = 5
         for line in lines:
             draw.text((40, y), line, font=font, fill="black", stroke_width=stroke_width, stroke_fill="black")
             draw.text((40, y), line, font=font, fill="white")
-            y += 80
+            y += line_height
 
         buf = io.BytesIO()
         image.save(buf, format='JPEG')
@@ -153,13 +161,11 @@ def create_news_banner(news_title, background_bytes):
 # --- Главная логика ---
 async def main():
     history = load_history()
-    # Сбор популярных новостей (свежие из всех источников)
     fresh_entries = fetch_all_feeds()
     if not fresh_entries:
         print("Нет новостей.")
         return
 
-    # Фильтрация уже опубликованных за сегодня
     fresh_entries = filter_fresh_entries(fresh_entries, history)[:MAX_NEWS]
     if not fresh_entries:
         print("Нет новых новостей за сегодня (все уже были).")
