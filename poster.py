@@ -11,7 +11,6 @@ from datetime import date, datetime
 from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
-from telegram.error import TelegramError
 from openai import OpenAI
 
 # --- Переменные окружения (секреты GitHub) ---
@@ -36,10 +35,7 @@ OFFSET_FILE = 'update_offset.txt'
 FONT_PATH = 'Roboto-Bold.ttf'
 
 # Инициализация Groq
-if GROQ_KEY:
-    client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1")
-else:
-    client = None
+client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_KEY else None
 
 # -------------------- Утилиты истории --------------------
 def load_json(filename, default=None):
@@ -174,7 +170,7 @@ def create_news_banner(news_title, background_bytes):
 
 # -------------------- Синтез речи (Groq Orpheus) --------------------
 def generate_voice(text: str) -> io.BytesIO | None:
-    """Генерирует голосовое сообщение через Groq Orpheus TTS и конвертирует в OGG."""
+    """Генерирует голосовое сообщение через Groq Orpheus и конвертирует в OGG."""
     if not client:
         print("Groq клиент не инициализирован, синтез речи невозможен.")
         return None
@@ -183,7 +179,7 @@ def generate_voice(text: str) -> io.BytesIO | None:
         print(f"Синтезирую голос для текста: {text[:70]}...")
         response = client.audio.speech.create(
             model="canopylabs/orpheus-v1-english",
-            voice="hannah",  # Можно сменить: troy, austin, cecilia, david, mia
+            voice="hannah",
             input=text,
             response_format="wav"
         )
@@ -255,7 +251,6 @@ async def post_news():
         models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
         for model_name in models_to_try:
             try:
-                print(f"Пробую модель {model_name}...")
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
