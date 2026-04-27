@@ -3,26 +3,34 @@ import io
 import json
 import feedparser
 import requests
-from datetime import date
+from datetime import date, datetime
 from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
 from openai import OpenAI
 
-# --- Переменные окружения (секреты GitHub) ---
+# --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
 GROQ_KEY = os.environ.get('GROQ_API_KEY', None)
-RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
+
+# --- Список RSS-источников (можно редактировать) ---
+RSS_FEEDS = [
+    'https://decrypt.co/feed',
+    'https://www.coindesk.com/arc/outboundfeeds/rss/',
+    'https://cointelegraph.com/rss',
+    'https://www.cnbc.com/id/10001147/device/rss/rss.html'  # экономика
+    # Можете добавить другие блоги или новостные сайты
+]
 
 # --- Настройки ---
 MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'   # если файла нет, используется DejaVuSans-Bold
+FONT_PATH = 'Roboto-Bold.ttf'   # если загружен, иначе DejaVuSans-Bold
 
 # Инициализация Groq
 if GROQ_KEY:
@@ -32,7 +40,7 @@ else:
     print("Groq: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
-# --- Функции для истории (чтобы не повторяться) ---
+# --- Функции истории ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -55,7 +63,35 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки (баннер с жирным шрифтом) ---
+# --- Сбор и отбор популярных новостей ---
+def fetch_all_feeds():
+    """Собирает записи из всех RSS-лент, удаляет дубликаты, возвращает топ MAX_NEWS свежих."""
+    all_entries = []
+    seen_urls = set()
+
+    for url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries:
+                link = entry.get('link', '')
+                if link and link not in seen_urls:
+                    seen_urls.add(link)
+                    all_entries.append(entry)
+            print(f"Источник {url}: получено {len(feed.entries)} записей")
+        except Exception as e:
+            print(f"Ошибка при парсинге {url}: {e}")
+
+    # Сортируем по дате публикации (новые первыми)
+    def get_pub_date(entry):
+        try:
+            return datetime(*entry.published_parsed[:6])
+        except:
+            return datetime.min
+
+    all_entries.sort(key=get_pub_date, reverse=True)
+    return all_entries[:MAX_NEWS]
+
+# --- Картинки (баннер с поднятым текстом) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -76,17 +112,15 @@ def create_news_banner(news_title, background_bytes):
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
 
-        # Крупный жирный шрифт (64pt) с обводкой
         if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 64)
         else:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
 
-        # Широкая плашка, начинается выше (y=460), чтобы текст не прилипал к низу
+        # Плашка ещё выше (начинается с y=400)
         overlay = Image.new('RGBA', (1280, 260), (0, 0, 0, 180))
-        image.paste(overlay, (0, 460), overlay)
+        image.paste(overlay, (0, 400), overlay)
 
-        # Перенос строк
         max_width = 1200
         words = news_title.split()
         lines = []
@@ -100,8 +134,8 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        # Рисуем с жирной чёрной обводкой
-        y = 490
+        # Текст начинается с y=430
+        y = 430
         stroke_width = 5
         for line in lines:
             draw.text((40, y), line, font=font, fill="black", stroke_width=stroke_width, stroke_fill="black")
@@ -119,11 +153,16 @@ def create_news_banner(news_title, background_bytes):
 # --- Главная логика ---
 async def main():
     history = load_history()
-    feed = feedparser.parse(RSS_FEED)
-    entries = feed.entries[:MAX_NEWS*2]
-    fresh_entries = filter_fresh_entries(entries, history)[:MAX_NEWS]
+    # Сбор популярных новостей (свежие из всех источников)
+    fresh_entries = fetch_all_feeds()
     if not fresh_entries:
-        print("Нет новых новостей за сегодня.")
+        print("Нет новостей.")
+        return
+
+    # Фильтрация уже опубликованных за сегодня
+    fresh_entries = filter_fresh_entries(fresh_entries, history)[:MAX_NEWS]
+    if not fresh_entries:
+        print("Нет новых новостей за сегодня (все уже были).")
         return
 
     translated_titles = []
@@ -137,7 +176,7 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Генерация поста через Groq ---
+    # --- Генерация через Groq ---
     ai_text = None
     if client:
         prompt = (
@@ -148,7 +187,7 @@ async def main():
             "- Дай яркий общий заголовок и короткий лид.\n"
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием.\n"
-            "- ОБЯЗАТЕЛЬНО умести всё в 800 символов или меньше!"
+            "- Обязательно умести всё в 800 символов или меньше!"
         )
         models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
         for model_name in models_to_try:
@@ -162,7 +201,6 @@ async def main():
                 )
                 raw = response.choices[0].message.content.strip()
                 if raw and len(raw) > 15:
-                    # На всякий случай обрезаем до 1000 символов
                     if len(raw) > 1000:
                         raw = raw[:997] + "..."
                     ai_text = raw
@@ -171,7 +209,7 @@ async def main():
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
 
-    # --- Если ИИ не сработал – красивый запасной вариант ---
+    # --- Fallback ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
@@ -192,7 +230,6 @@ async def main():
 
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
-        # Telegram разрешает максимум 1024 символа в подписи
         await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text[:1024])
     else:
         await bot.send_message(chat_id=CHAT_ID, text=ai_text)
