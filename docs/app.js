@@ -2,6 +2,22 @@
   const REPO = 'vladevakz/crypto-news-final';
   function $(id) { return document.getElementById(id); }
 
+  // Универсальные функции для работы с UTF-8 и Base64
+  function utf8ToBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+    let binary = '';
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    return btoa(binary);
+  }
+  function base64ToUtf8(base64) {
+    const binary = atob(base64.replace(/\s/g, ''));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  }
+
   window.addEventListener('DOMContentLoaded', function() {
     // Загружаем сохранённые ключи
     function loadKeys() {
@@ -25,7 +41,6 @@
       });
     });
 
-    // Вспомогательные функции
     function showStatus(elId, message, type) {
       const el = $(elId);
       if (!el) return;
@@ -38,15 +53,6 @@
         'Authorization': `token ${token}`,
         'Accept': 'application/vnd.github+json'
       };
-    }
-
-    // Безопасное кодирование в base64
-    function toBase64(str) {
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(str);
-      let binary = '';
-      bytes.forEach(b => binary += String.fromCharCode(b));
-      return btoa(binary);
     }
 
     // Запуск workflow
@@ -72,14 +78,13 @@
       btn.disabled = false;
     }
 
-    // Привязка кнопок быстрых действий
     $('post-news-btn').addEventListener('click', function() { dispatchWorkflow('post-news.yml', this); });
     $('reply-btn').addEventListener('click', function() { dispatchWorkflow('reply-messages.yml', this); });
 
     // Проверка системы
     $('health-btn').addEventListener('click', async function() {
       const token = localStorage.getItem('gh_token');
-      if (!token) return alert('Введите GitHub Token в настройках');
+      if (!token) return alert('Введите GitHub Token');
       const results = [];
       try {
         const r = await fetch('https://api.github.com/user', { headers: githubHeaders() });
@@ -140,7 +145,8 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/posted.json`, { headers: githubHeaders() });
         const d = await r.json();
         if (!d.content) return;
-        const posted = JSON.parse(atob(d.content.replace(/\n/g,'')));
+        const json = base64ToUtf8(d.content);
+        const posted = JSON.parse(json);
         const today = new Date().toISOString().slice(0,10);
         let todayCount = 0, weekCount = 0;
         const weekAgo = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
@@ -188,7 +194,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const feeds = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const feeds = JSON.parse(base64ToUtf8(d.content));
           $('feeds-list').innerHTML = feeds.map((f,i) => `<div class="feed-item"><input value="${f}" data-index="${i}"><button class="delete-feed-btn">❌</button></div>`).join('');
           window._feedsData = feeds;
         } else {
@@ -214,7 +220,7 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/feeds.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update feeds', content: toBase64(content), sha })
+          body: JSON.stringify({ message: 'Update feeds', content: utf8ToBase64(content), sha })
         });
         alert('Feeds сохранены');
       } catch (e) { alert('Ошибка сохранения'); }
@@ -229,10 +235,10 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const prompt = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const prompt = JSON.parse(base64ToUtf8(d.content));
           $('system-prompt-input').value = prompt.system_prompt || '';
         }
-      } catch (e) {}
+      } catch (e) { $('system-prompt-input').value = 'Ошибка загрузки'; }
     }
     $('save-prompt-btn').addEventListener('click', async function() {
       const content = JSON.stringify({ system_prompt: $('system-prompt-input').value });
@@ -243,7 +249,7 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/prompt.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update prompt', content: toBase64(content), sha })
+          body: JSON.stringify({ message: 'Update prompt', content: utf8ToBase64(content), sha })
         });
         showStatus('prompt-status', '✅ Промпт сохранён', 'success');
       } catch (e) { showStatus('prompt-status', '❌ Ошибка', 'error'); }
@@ -258,7 +264,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/blocked.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const blocked = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const blocked = JSON.parse(base64ToUtf8(d.content));
           $('blocked-input').value = blocked.join(', ');
         }
       } catch (e) {}
@@ -273,7 +279,7 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/blocked.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update blocked', content: toBase64(content), sha })
+          body: JSON.stringify({ message: 'Update blocked', content: utf8ToBase64(content), sha })
         });
         showStatus('blocked-status', '✅ Сохранено', 'success');
       } catch (e) { showStatus('blocked-status', '❌ Ошибка', 'error'); }
@@ -288,7 +294,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const q = JSON.parse(atob(d.content.replace(/\n/g,''))).query;
+          const q = JSON.parse(base64ToUtf8(d.content)).query;
           $('unsplash-query-input').value = q;
         }
       } catch (e) {}
@@ -302,20 +308,14 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/unsplash.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update unsplash', content: toBase64(content), sha })
+          body: JSON.stringify({ message: 'Update unsplash', content: utf8ToBase64(content), sha })
         });
         showStatus('unsplash-status', '✅ Сохранено', 'success');
       } catch (e) { showStatus('unsplash-status', '❌ Ошибка', 'error'); }
     });
     loadUnsplashUI();
 
-    // Обновление cron
-    $('update-news-cron-btn').addEventListener('click', async function() {
-      await updateCron('post-news.yml', 'news-cron');
-    });
-    $('update-reply-cron-btn').addEventListener('click', async function() {
-      await updateCron('reply-messages.yml', 'reply-cron');
-    });
+    // Cron
     async function updateCron(wf, inputId) {
       const token = localStorage.getItem('gh_token');
       if (!token) return alert('Введите GitHub Token');
@@ -324,22 +324,24 @@
       try {
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { headers: githubHeaders() });
         const d = await r.json();
-        let content = atob(d.content.replace(/\n/g,''));
+        let content = base64ToUtf8(d.content);
         content = content.replace(/cron:\s*'[^']+'/, `cron: '${newCron}'`);
         await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: `Update cron ${wf}`, content: toBase64(content), sha: d.sha })
+          body: JSON.stringify({ message: `Update cron ${wf}`, content: utf8ToBase64(content), sha: d.sha })
         });
         showStatus('cron-status', `✅ ${wf} обновлён`, 'success');
       } catch (e) { showStatus('cron-status', '❌ Ошибка', 'error'); }
     }
+    $('update-news-cron-btn').addEventListener('click', () => updateCron('post-news.yml', 'news-cron'));
+    $('update-reply-cron-btn').addEventListener('click', () => updateCron('reply-messages.yml', 'reply-cron'));
 
     // Отправка кастомного сообщения
     $('send-custom-msg-btn').addEventListener('click', async function() {
       const tgt = localStorage.getItem('tg_bot_token');
       const tgc = localStorage.getItem('tg_chat_id');
-      if (!tgt || !tgc) return alert('Введите Telegram токены');
+      if (!tgt || !tgc) return alert('Введите токены Telegram');
       const text = $('custom-msg-text').value;
       try {
         const r = await fetch(`https://api.telegram.org/bot${tgt}/sendMessage`, {
@@ -352,7 +354,7 @@
       } catch (e) { showStatus('custom-msg-status', '❌ Ошибка сети', 'error'); }
     });
 
-    // Логи последнего запуска
+    // Логи
     $('view-logs-btn').addEventListener('click', async function() {
       const token = localStorage.getItem('gh_token');
       if (!token) return alert('Введите GitHub Token');
@@ -361,9 +363,7 @@
         const d = await r.json();
         if (d.workflow_runs?.[0]) {
           $('logs-output').innerHTML = `<a href="${d.workflow_runs[0].html_url}" target="_blank">Открыть в GitHub</a>`;
-        } else {
-          $('logs-output').textContent = 'Нет запусков';
-        }
+        } else $('logs-output').textContent = 'Нет запусков';
       } catch (e) { $('logs-output').textContent = 'Ошибка'; }
     });
 
@@ -386,9 +386,7 @@
           $('recent-messages').innerHTML = html || 'Нет текстовых';
           const maxId = Math.max(...d.result.map(u=>u.update_id));
           localStorage.setItem('last_msg_offset', maxId+1);
-        } else {
-          $('recent-messages').textContent = 'Нет новых сообщений';
-        }
+        } else $('recent-messages').textContent = 'Нет новых сообщений';
       } catch (e) { $('recent-messages').textContent = 'Ошибка'; }
     });
 
@@ -403,14 +401,14 @@
           await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
             method: 'PUT',
             headers: githubHeaders(),
-            body: JSON.stringify({ message: `Reset ${path}`, content: toBase64(content), sha: d.sha })
+            body: JSON.stringify({ message: `Reset ${path}`, content: utf8ToBase64(content), sha: d.sha })
           });
         } catch (e) {}
       }
       showStatus('reset-status', '✅ История сброшена', 'success');
     });
 
-    // Резервное копирование
+    // Бэкап
     $('download-backup-btn').addEventListener('click', async function() {
       const files = ['posted.json','update_offset.txt'];
       let data = '';
@@ -418,7 +416,7 @@
         try {
           const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${f}`, { headers: githubHeaders() });
           const d = await r.json();
-          if (d.content) data += `=== ${f} ===\n` + atob(d.content.replace(/\n/g,'')) + '\n\n';
+          if (d.content) data += `=== ${f} ===\n` + base64ToUtf8(d.content) + '\n\n';
         } catch (e) {}
       }
       const blob = new Blob([data], {type:'text/plain'});
@@ -427,9 +425,7 @@
       a.download = 'bot-backup.txt';
       a.click();
     });
-    $('upload-backup-btn').addEventListener('click', function() {
-      $('backup-file-input').click();
-    });
+    $('upload-backup-btn').addEventListener('click', () => $('backup-file-input').click());
     $('backup-file-input').addEventListener('change', async function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -444,7 +440,7 @@
           await fetch(`https://api.github.com/repos/${REPO}/contents/${filename}`, {
             method: 'PUT',
             headers: githubHeaders(),
-            body: JSON.stringify({ message: `Restore ${filename}`, content: toBase64(content), sha: d.sha })
+            body: JSON.stringify({ message: `Restore ${filename}`, content: utf8ToBase64(content), sha: d.sha })
           });
         } catch (e) {}
       }
@@ -456,7 +452,6 @@
       const now = new Date();
       const hours = now.getHours();
       const minutes = now.getMinutes();
-
       let nextNewsHour = Math.ceil(hours / 3) * 3;
       let nextNews = new Date(now);
       nextNews.setHours(nextNewsHour, 0, 0, 0);
@@ -482,7 +477,7 @@
     // Тестовый чат с AI
     $('test-ai-chat-btn').addEventListener('click', async function() {
       const groqKey = localStorage.getItem('groq_key');
-      if (!groqKey) return alert('Введите Groq API Key в настройках');
+      if (!groqKey) return alert('Введите Groq API Key');
       const input = $('test-chat-input').value.trim();
       if (!input) return;
       $('test-chat-output').innerHTML = '<span class="status loading">⏳ Думаю...</span>';
@@ -522,7 +517,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const m = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const m = JSON.parse(base64ToUtf8(d.content));
           $('chat-model-select').value = m.chat || 'llama-3.3-70b-versatile';
           $('tts-model-select').value = m.tts || 'canopylabs/orpheus-v1-english';
           $('tts-voice-select').value = m.voice || 'hannah';
@@ -542,7 +537,7 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update AI models', content: toBase64(JSON.stringify(data)), sha })
+          body: JSON.stringify({ message: 'Update AI models', content: utf8ToBase64(JSON.stringify(data)), sha })
         });
         showStatus('models-status', '✅ Модели сохранены', 'success');
       } catch (e) { showStatus('models-status', '❌ Ошибка', 'error'); }
@@ -557,7 +552,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const cfg = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const cfg = JSON.parse(base64ToUtf8(d.content));
           $('max-news-input').value = cfg.MAX_NEWS || 5;
         }
       } catch (e) {}
@@ -569,12 +564,12 @@
         const d = await r.json();
         const sha = d.sha || null;
         let cfg = {};
-        if (sha) cfg = JSON.parse(atob(d.content.replace(/\n/g,'')));
+        if (sha) cfg = JSON.parse(base64ToUtf8(d.content));
         cfg.MAX_NEWS = max;
         await fetch(`https://api.github.com/repos/${REPO}/contents/config.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update MAX_NEWS', content: toBase64(JSON.stringify(cfg)), sha })
+          body: JSON.stringify({ message: 'Update MAX_NEWS', content: utf8ToBase64(JSON.stringify(cfg)), sha })
         });
         showStatus('maxnews-status', '✅ MAX_NEWS сохранено', 'success');
       } catch (e) { showStatus('maxnews-status', '❌ Ошибка', 'error'); }
@@ -592,9 +587,7 @@
         if (core) {
           const resetDate = new Date(core.reset * 1000).toLocaleTimeString('ru-RU');
           $('limits-output').innerHTML = `Осталось: ${core.remaining} / ${core.limit} запросов<br>Сброс в: ${resetDate}`;
-        } else {
-          $('limits-output').textContent = 'Не удалось получить лимиты';
-        }
+        } else $('limits-output').textContent = 'Не удалось получить лимиты';
       } catch (e) { $('limits-output').textContent = 'Ошибка'; }
     });
 
@@ -606,7 +599,7 @@
         const r = await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, { headers: githubHeaders() });
         if (r.ok) {
           const d = await r.json();
-          const n = JSON.parse(atob(d.content.replace(/\n/g,'')));
+          const n = JSON.parse(base64ToUtf8(d.content));
           $('error-notify-checkbox').checked = n.enabled || false;
         }
       } catch (e) {}
@@ -620,14 +613,14 @@
         await fetch(`https://api.github.com/repos/${REPO}/contents/notify.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update notify', content: toBase64(JSON.stringify({enabled})), sha })
+          body: JSON.stringify({ message: 'Update notify', content: utf8ToBase64(JSON.stringify({enabled})), sha })
         });
         showStatus('notify-status', '✅ Настройка сохранена', 'success');
       } catch (e) { showStatus('notify-status', '❌ Ошибка', 'error'); }
     });
     loadNotifyUI();
 
-    // Загрузка данных на вкладке "Данные"
+    // Данные (вкладка)
     async function loadDataView() {
       if (!localStorage.getItem('gh_token')) return;
       const files = ['posted.json', 'update_offset.txt', 'feeds.json', 'prompt.json'];
@@ -637,18 +630,14 @@
           const r = await fetch(`https://api.github.com/repos/${REPO}/contents/${f}`, { headers: githubHeaders() });
           const d = await r.json();
           if (d.content) {
-            const content = atob(d.content.replace(/\n/g,''));
             const el = $(elId);
-            if (el) el.textContent = content;
+            if (el) el.textContent = base64ToUtf8(d.content);
           }
         } catch (e) {}
       }
     }
     loadDataView();
 
-    // Инициализация при запуске
-    if (localStorage.getItem('gh_token')) {
-      initData();
-    }
+    if (localStorage.getItem('gh_token')) initData();
   });
 })();
