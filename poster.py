@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-from openai import OpenAI
+from huggingface_hub import InferenceClient
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY', None)
+HF_TOKEN = os.environ.get('HF_TOKEN', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,17 +22,17 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'
+FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
 
-# Инициализация DeepSeek
-if DEEPSEEK_KEY:
-    print("DeepSeek: ключ найден, создаю клиента.")
-    client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+# Инициализация Hugging Face
+hf_client = None
+if HF_TOKEN:
+    print("Hugging Face: ключ найден, создаю клиента.")
+    hf_client = InferenceClient(token=HF_TOKEN)
 else:
-    print("DeepSeek: ключ НЕ найден, ИИ не будет использоваться.")
-    client = None
+    print("Hugging Face: ключ НЕ найден, ИИ не будет использоваться.")
 
-# --- Функции истории (без изменений) ---
+# --- Функции истории ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -55,7 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки ---
+# --- Картинки (крупный шрифт 60pt) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -131,9 +131,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к DeepSeek ---
+    # --- Запрос к Hugging Face (перебор моделей) ---
     ai_text = None
-    if client:
+    if hf_client:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -143,17 +143,35 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        try:
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.9,
-                max_tokens=800
-            )
-            ai_text = response.choices[0].message.content.strip()
-            print("DeepSeek сгенерировал пост.")
-        except Exception as e:
-            print(f"Ошибка DeepSeek: {type(e).__name__}: {e}")
+        # Пробуем несколько надёжных моделей
+        models_to_try = [
+            "google/flan-t5-large",               # меньше 1 млрд параметров, всегда бесплатна
+            "mistralai/Mistral-7B-Instruct-v0.1", # популярная, может быть под квотой
+            "facebook/bart-large-cnn"             # запасная
+        ]
+        for model_name in models_to_try:
+            try:
+                print(f"Пробую модель {model_name}...")
+                response = hf_client.text_generation(
+                    prompt,
+                    model=model_name,
+                    max_new_tokens=600,
+                    temperature=0.9,
+                    do_sample=True,
+                    top_p=0.95,
+                    repetition_penalty=1.1
+                )
+                # Ответ может быть строкой или объектом
+                text = response if isinstance(response, str) else str(response)
+                if text and len(text.strip()) > 10:
+                    ai_text = text.strip()
+                    print(f"Модель {model_name} вернула текст.")
+                    break
+                else:
+                    print(f"Модель {model_name} вернула пустой ответ.")
+            except Exception as e:
+                print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
+                continue
 
     # --- Fallback ---
     if not ai_text:
@@ -168,7 +186,7 @@ async def main():
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
-    # --- Отправка ---
+    # --- Баннер и отправка ---
     background = get_background_image()
     banner = None
     if background:
