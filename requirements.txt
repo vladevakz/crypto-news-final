@@ -1,6 +1,6 @@
 feedparser
-python-telegram-bot
+requests
 deep-translator
 pillow
-requests
+python-telegram-bot
 openai
