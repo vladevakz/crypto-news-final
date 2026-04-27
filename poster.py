@@ -5,16 +5,16 @@ import feedparser
 import requests
 from datetime import date
 from deep_translator import GoogleTranslator
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-import cohere
+from huggingface_hub import InferenceClient
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-COHERE_KEY = os.environ.get('COHERE_API_KEY', None)
+HF_TOKEN = os.environ.get('HF_TOKEN', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,17 +22,17 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'
 
-# Инициализация Cohere с проверкой
-if COHERE_KEY:
-    print("Cohere: ключ найден, создаю клиента.")
-    co = cohere.Client(COHERE_KEY)
+# Инициализация Hugging Face
+if HF_TOKEN:
+    print("Hugging Face: ключ найден, создаю клиента.")
+    hf_client = InferenceClient(token=HF_TOKEN)
 else:
-    print("Cohere: ключ НЕ найден, ИИ не будет использоваться.")
-    co = None
+    print("Hugging Face: ключ НЕ найден, ИИ не будет использоваться.")
+    hf_client = None
 
-# --- Функции истории ---
+# --- Функции истории (без изменений) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -55,7 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки с крупным шрифтом и обводкой ---
+# --- Функции картинок (с fallback-шрифтом) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -71,24 +71,23 @@ def get_background_image(query="crypto blockchain technology"):
         print(f"Unsplash error: {e}")
         return None
 
-def create_news_banner(title, background_bytes):
+def create_news_banner(news_title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
 
-        # Крупный жирный шрифт (60pt)
+        # Пробуем использовать загруженный Roboto-Bold.ttf
         if os.path.exists(FONT_PATH):
-            font = ImageFont.truetype(FONT_PATH, 60)
+            font = ImageFont.truetype(FONT_PATH, 48)
         else:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+            # если нет – дефолтный жирный DejaVu Sans на GitHub Actions
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
 
-        # Полупрозрачная плашка
-        overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 160))
-        image.paste(overlay, (0, 500), overlay)
+        overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 160))
+        image.paste(overlay, (0, 520), overlay)
 
-        # Переносим текст
         max_width = 1200
-        words = title.split()
+        words = news_title.split()
         lines = []
         current_line = ""
         for word in words:
@@ -100,16 +99,10 @@ def create_news_banner(title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        # Рисуем белый текст с чёрной обводкой для контраста
-        y = 520
-        stroke_width = 3
+        y = 540
         for line in lines:
-            # Обводка (чёрная)
-            draw.text((40, y), line, font=font, fill="black",
-                      stroke_width=stroke_width, stroke_fill="black")
-            # Основной белый текст поверх
             draw.text((40, y), line, font=font, fill="white")
-            y += 70
+            y += 55
 
         buf = io.BytesIO()
         image.save(buf, format='JPEG')
@@ -129,65 +122,79 @@ async def main():
         print("Нет новых новостей за сегодня.")
         return
 
-    # Переводим заголовки
-    translated_titles = []
-    for e in fresh_entries:
-        try:
-            translated_titles.append(TRANSLATOR.translate(e.title))
-        except:
-            translated_titles.append(e.title)
+    # Собираем заголовки для ИИ
+    headlines = "\n".join([f"- {e.title}" for e in fresh_entries])
 
-    banner_title = translated_titles[0]  # на баннер
-    body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
-    headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
+    # Улучшенный промпт
+    prompt = (
+        "Ты — популярный крипто-блогер с отличным чувством юмора. У тебя есть пять свежих заголовков:\n"
+        f"{headlines}\n\n"
+        "Сделай из этого яркий пост для Telegram на русском языке. Строго следуй правилам:\n"
+        "1. Придумай цепляющий заголовок для всего поста (обязательно с эмодзи), который заинтригует.\n"
+        "2. Для каждой новости дай одну короткую, но сочную фразу с личным мнением (ироничным, дерзким, но профессиональным).\n"
+        "3. Разбавляй эмодзи, не перегружай.\n"
+        "4. Разбей текст на абзацы, чтобы читалось легко.\n"
+        "5. Никаких списков вида «1. 2. 3.» – просто живой текст.\n\n"
+        "Формат вывода:\n"
+        "🔥 ТВОЙ ЗАГОЛОВОК\n\n"
+        "Короткий лид-абзац.\n\n"
+        "• Пояснение первой новости\n\n"
+        "• Пояснение второй новости\n\n"
+        "... и так далее\n\n"
+        "Живой комментарий в конце.\n"
+    )
 
-    # --- Попытка Cohere ---
+    # Пытаемся получить креативный пост от Hugging Face
     ai_text = None
-    if co:
-        prompt = (
-            "Ты — популярный крипто-блогер с отличным чувством юмора. У тебя есть пять заголовков новостей:\n"
-            f"{headlines_for_ai}\n\n"
-            "Важно: на баннере уже будет крупно написан заголовок первой новости, поэтому НЕ включай его в текст поста. "
-            "Напиши живой пост для Telegram на русском языке. Следуй правилам:\n"
-            "1. Придумай яркий общий заголовок (с эмодзи) и короткий лид-абзац — это будет начало поста.\n"
-            "2. Затем для каждой новости (начиная со второй, первую пропускаем) дай один-два сочных предложения с личным мнением.\n"
-            "3. Разбивай текст на абзацы, используй эмодзи умеренно.\n"
-            "4. В конце — короткий живой комментарий или вопрос читателям.\n"
-            "Формат: сначала общий заголовок и лид, потом каждая новость с новой строки, без нумерации.\n"
-        )
+    if hf_client:
         try:
-            print("Отправляю запрос в Cohere...")
-            response = co.generate(
-                model='command-r',
-                prompt=prompt,
-                max_tokens=800,
-                temperature=0.9
+            response = hf_client.text_generation(
+                prompt,
+                model="mistralai/Mistral-7B-Instruct-v0.1",
+                max_new_tokens=800,
+                temperature=0.9,
             )
-            ai_text = response.generations[0].text.strip()
-            print("Cohere сгенерировал пост.")
+            ai_text = response.strip()
+            print("ИИ (Hugging Face) сгенерировал пост.")
         except Exception as e:
-            print(f"Ошибка Cohere: {type(e).__name__}: {e}")
+            print(f"Ошибка Hugging Face: {type(e).__name__}: {e}")
+            # Попробуем другую модель, если первая не сработала
+            try:
+                response = hf_client.text_generation(
+                    prompt,
+                    model="google/flan-t5-xxl", # Запасная модель
+                    max_new_tokens=800,
+                    temperature=0.9,
+                )
+                ai_text = response.strip()
+                print("ИИ (Hugging Face) сгенерировал пост (запасная модель).")
+            except Exception as e2:
+                print(f"Ошибка Hugging Face (вторая попытка): {type(e2).__name__}: {e2}")
 
-    # --- Fallback без лишнего вступления ---
+    # Если Hugging Face не смог – делаем перевод с форматированием
     if not ai_text:
-        print("Используем fallback без ИИ.")
-        if body_titles:
-            emojis = ["🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]
-            post_lines = []
-            for i, t in enumerate(body_titles):
-                emoji = emojis[i] if i < len(emojis) else "🔹"
-                post_lines.append(f"{emoji} {t}")
-            ai_text = "\n\n".join(post_lines) if post_lines else "🔥 Сегодня одна важная новость (см. на баннере)."
-        else:
-            ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
+        print("Используем fallback-перевод.")
+        post_lines = [""]
+        for i, entry in enumerate(fresh_entries, 1):
+            try:
+                trans_title = TRANSLATOR.translate(entry.title)
+            except:
+                trans_title = entry.title
+            post_lines.append(f"{i}. {trans_title}")
+        ai_text = "\n".join(post_lines)
 
-    # --- Баннер ---
-    background = get_background_image()
+    # Баннер
     banner = None
+    background = get_background_image()
     if background:
-        banner = create_news_banner(banner_title, background)
+        first_title = fresh_entries[0].title
+        try:
+            first_title = TRANSLATOR.translate(first_title)
+        except:
+            pass
+        banner = create_news_banner(first_title, background)
 
-    # --- Отправка ---
+    # Отправка
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
         await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text, parse_mode='HTML')
