@@ -60,6 +60,7 @@
         .status.error { background: #b71c1c; color: #ffcdd2; }
         .status.info { background: #0d47a1; color: #bbdefb; }
         .status.loading { background: #424242; color: #e0e0e0; }
+        .status.warning { background: #e65100; color: #ffe0b2; }
         .log-item {
             border-bottom: 1px solid #333;
             padding: 8px 0;
@@ -85,6 +86,17 @@
             max-height: 200px;
             overflow-y: auto;
         }
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #12121c;
+            color: #e0e0e0;
+            font-size: 0.9rem;
+        }
+        .small { font-size: 0.8rem; color: #aaa; margin: 4px 0; }
     </style>
 </head>
 <body>
@@ -95,6 +107,14 @@
         <button class="btn green" onclick="dispatchWorkflow('post-news.yml', 'post-news-btn')" id="post-news-btn">📰 Опубликовать новости</button>
         <button class="btn blue" onclick="dispatchWorkflow('reply-messages.yml', 'reply-btn')" id="reply-btn">💬 Ответить на сообщения</button>
         <div id="dispatch-status"></div>
+    </div>
+
+    <div class="card">
+        <h2>🩺 Проверка системы</h2>
+        <p class="small">Проверит GitHub Token, Groq API, наличие workflows и файлов.</p>
+        <input type="password" id="groq-key-input" placeholder="Groq API Key (для проверки)">
+        <button class="btn" onclick="checkHealth()" id="health-btn">🔍 Проверить всё</button>
+        <div id="health-status"></div>
     </div>
 
     <div class="card">
