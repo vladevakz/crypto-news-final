@@ -5,7 +5,7 @@ import feedparser
 import requests
 from datetime import date
 from deep_translator import GoogleTranslator
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from telegram import Bot
 import asyncio
 import cohere
@@ -22,10 +22,15 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе будет DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
 
-# Инициализация Cohere
-co = cohere.Client(COHERE_KEY) if COHERE_KEY else None
+# Инициализация Cohere с проверкой
+if COHERE_KEY:
+    print("Cohere: ключ найден, создаю клиента.")
+    co = cohere.Client(COHERE_KEY)
+else:
+    print("Cohere: ключ НЕ найден, ИИ не будет использоваться.")
+    co = None
 
 # --- Функции истории ---
 def load_history():
@@ -50,7 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки ---
+# --- Картинки с крупным шрифтом и обводкой ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -71,14 +76,17 @@ def create_news_banner(title, background_bytes):
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
 
+        # Крупный жирный шрифт (60pt)
         if os.path.exists(FONT_PATH):
-            font = ImageFont.truetype(FONT_PATH, 48)
+            font = ImageFont.truetype(FONT_PATH, 60)
         else:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
 
-        overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 160))
-        image.paste(overlay, (0, 520), overlay)
+        # Полупрозрачная плашка
+        overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 160))
+        image.paste(overlay, (0, 500), overlay)
 
+        # Переносим текст
         max_width = 1200
         words = title.split()
         lines = []
@@ -92,10 +100,16 @@ def create_news_banner(title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        y = 540
+        # Рисуем белый текст с чёрной обводкой для контраста
+        y = 520
+        stroke_width = 3
         for line in lines:
+            # Обводка (чёрная)
+            draw.text((40, y), line, font=font, fill="black",
+                      stroke_width=stroke_width, stroke_fill="black")
+            # Основной белый текст поверх
             draw.text((40, y), line, font=font, fill="white")
-            y += 55
+            y += 70
 
         buf = io.BytesIO()
         image.save(buf, format='JPEG')
@@ -115,7 +129,7 @@ async def main():
         print("Нет новых новостей за сегодня.")
         return
 
-    # Переводим заголовки (для баннера и fallback)
+    # Переводим заголовки
     translated_titles = []
     for e in fresh_entries:
         try:
@@ -123,13 +137,11 @@ async def main():
         except:
             translated_titles.append(e.title)
 
-    # Готовим данные для баннера (первый заголовок)
-    banner_title = translated_titles[0]
-    # Убираем первый заголовок из списка для текста, чтобы не дублировать
+    banner_title = translated_titles[0]  # на баннер
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Попытка получить пост через Cohere ---
+    # --- Попытка Cohere ---
     ai_text = None
     if co:
         prompt = (
@@ -144,6 +156,7 @@ async def main():
             "Формат: сначала общий заголовок и лид, потом каждая новость с новой строки, без нумерации.\n"
         )
         try:
+            print("Отправляю запрос в Cohere...")
             response = co.generate(
                 model='command-r',
                 prompt=prompt,
@@ -153,20 +166,18 @@ async def main():
             ai_text = response.generations[0].text.strip()
             print("Cohere сгенерировал пост.")
         except Exception as e:
-            print(f"Ошибка Cohere: {e}")
+            print(f"Ошибка Cohere: {type(e).__name__}: {e}")
 
-    # Если Cohere не сработал, делаем fallback с эмодзи и без первого заголовка
+    # --- Fallback без лишнего вступления ---
     if not ai_text:
-        print("Используем fallback-перевод с эмодзи.")
-        post_lines = [""]  # <-- исправлено: скобка закрыта
+        print("Используем fallback без ИИ.")
         if body_titles:
             emojis = ["🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]
+            post_lines = []
             for i, t in enumerate(body_titles):
                 emoji = emojis[i] if i < len(emojis) else "🔹"
                 post_lines.append(f"{emoji} {t}")
-        if post_lines:
-            post_lines.insert(0, "🔥 *Главные новости криптомира:*\n")
-            ai_text = "\n\n".join(post_lines)
+            ai_text = "\n\n".join(post_lines) if post_lines else "🔥 Сегодня одна важная новость (см. на баннере)."
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
