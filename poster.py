@@ -14,7 +14,7 @@ from openai import OpenAI
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-YANDEX_KEY = os.environ.get('YANDEX_API_KEY', None)   # ваш ключ AQVN...
+GROQ_KEY = os.environ.get('GROQ_API_KEY', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,20 +22,17 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'
+FONT_PATH = 'Roboto-Bold.ttf'  # не забудьте загрузить шрифт в корень репозитория
 
-# Инициализация AI Studio клиента
-if YANDEX_KEY:
-    print("AI Studio: ключ найден, создаю клиента.")
-    client = OpenAI(
-        api_key=YANDEX_KEY,
-        base_url="https://ai-studio.api.yandex.net/v1"  # OpenAI-совместимый endpoint
-    )
+# Инициализация Groq
+if GROQ_KEY:
+    print("Groq: ключ найден, создаю клиента.")
+    client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1")
 else:
-    print("AI Studio: ключ НЕ найден, ИИ не будет использоваться.")
+    print("Groq: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
-# --- Функции истории (без изменений) ---
+# --- Функции истории, картинок и т.д. (без изменений) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -58,7 +55,6 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -78,7 +74,6 @@ def create_news_banner(news_title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
-
         if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 60)
         else:
@@ -134,7 +129,7 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к AI Studio ---
+    # --- Запрос к Groq ---
     ai_text = None
     if client:
         prompt = (
@@ -146,12 +141,7 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        # Пробуем несколько моделей, доступных в AI Studio
-        models_to_try = [
-            "yandexgpt",            # основная модель YandexGPT
-            "yandexgpt-lite",       # облегчённая
-            "deepseek-v3"           # если есть доступ
-        ]
+        models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
         for model_name in models_to_try:
             try:
                 print(f"Пробую модель {model_name}...")
@@ -163,13 +153,10 @@ async def main():
                 )
                 ai_text = response.choices[0].message.content.strip()
                 if ai_text and len(ai_text) > 15:
-                    print(f"AI Studio ({model_name}) сгенерировал пост.")
+                    print(f"Groq ({model_name}) сгенерировал пост.")
                     break
-                else:
-                    print(f"Модель {model_name} вернула пустой или короткий ответ.")
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
-                continue
 
     # --- Fallback ---
     if not ai_text:
@@ -180,7 +167,7 @@ async def main():
             for i, t in enumerate(body_titles):
                 emoji = emojis[i] if i < len(emojis) else "🔹"
                 post_lines.append(f"{emoji} {t}")
-            ai_text = "\n\n".join(post_lines) if post_lines else "🔥 Сегодня одна важная новость (см. на баннере)."
+            ai_text = "\n\n".join(post_lines)
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
@@ -192,7 +179,7 @@ async def main():
 
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
-        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text, parse_mode='HTML')
+        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text)
     else:
         await bot.send_message(chat_id=CHAT_ID, text=ai_text)
     print("Пост отправлен!")
