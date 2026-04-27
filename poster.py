@@ -13,7 +13,7 @@ import google.generativeai as genai
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-GEMINI_KEY = os.environ.get('GEMINI_API_KEY', None)
+GEMINI_KEY = os.environ.get('GEMINI_APT_KEY', None)   # ← исправлено под ваш секрет
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
@@ -22,16 +22,14 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если нет, будет DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'
 
 # Инициализация Gemini
 if GEMINI_KEY:
     print("Gemini: ключ найден.")
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')   # бесплатная, рабочая модель
 else:
     print("Gemini: ключ НЕ найден, ИИ не будет использоваться.")
-    model = None
 
 # --- Функции истории ---
 def load_history():
@@ -132,9 +130,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к Gemini ---
+    # --- Запрос к Gemini (перебор моделей) ---
     ai_text = None
-    if model:
+    if GEMINI_KEY:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -144,12 +142,18 @@ async def main():
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
-        try:
-            response = model.generate_content(prompt)
-            ai_text = response.text.strip()
-            print("Gemini сгенерировал пост.")
-        except Exception as e:
-            print(f"Ошибка Gemini: {type(e).__name__}: {e}")
+        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
+        for model_name in models_to_try:
+            try:
+                print(f"Пробую модель {model_name}...")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                ai_text = response.text.strip()
+                print(f"Gemini ({model_name}) сгенерировал пост.")
+                break
+            except Exception as e:
+                print(f"Ошибка Gemini ({model_name}): {type(e).__name__}: {e}")
+                continue
 
     # --- Fallback без дублирования ---
     if not ai_text:
