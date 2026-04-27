@@ -142,33 +142,35 @@ async def main():
     # Пытаемся получить креативный пост от Gemini
     ai_text = None
     try:
-    # Пробуем актуальную бесплатную модель
-    model = genai.GenerativeModel('gemini-1.0-pro')
-    response = model.generate_content(prompt)
-    ai_text = response.text
-    print("ИИ сгенерировал креативный пост.")
-except Exception as e:
-    print(f"Ошибка Gemini: {type(e).__name__}: {e}")
-    # Попробуем ещё одну модель, если первая не сработала
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        # Пробуем актуальную бесплатную модель
+        model = genai.GenerativeModel('gemini-1.0-pro')
         response = model.generate_content(prompt)
         ai_text = response.text
-        print("ИИ сгенерировал креативный пост (через gemini-1.5-flash-latest).")
-    except Exception as e2:
-        print(f"Ошибка Gemini (вторая попытка): {type(e2).__name__}: {e2}")
+        print("ИИ сгенерировал креативный пост (gemini-1.0-pro).")
+    except Exception as e:
+        print(f"Ошибка Gemini (первая модель): {type(e).__name__}: {e}")
+        try:
+            # Пробуем другую модель
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            response = model.generate_content(prompt)
+            ai_text = response.text
+            print("ИИ сгенерировал креативный пост (gemini-1.5-flash-latest).")
+        except Exception as e2:
+            print(f"Ошибка Gemini (вторая модель): {type(e2).__name__}: {e2}")
 
     # Если Gemini не смог или отказался – делаем обычный перевод с форматированием
     if not ai_text:
-        print("Используем fallback-перевод.")
-        post_lines = [""]  # <-- Вот так правильно, с закрытой скобкой
+        print("Используем fallback-перевод с эмодзи.")
+        post_lines = [""]  # пустая строка корректно инициализирована
         for i, entry in enumerate(fresh_entries, 1):
             try:
                 trans_title = TRANSLATOR.translate(entry.title)
             except:
                 trans_title = entry.title
-            post_lines.append(f"{i}. {trans_title}")
-        ai_text = "\n".join(post_lines)
+            emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i-1] if i <= 5 else "🔹"
+            post_lines.append(f"{emoji} {trans_title}")
+        post_lines.insert(0, "🔥 *Топ-5 новостей криптомира:*\n")
+        ai_text = "\n\n".join(post_lines)
 
     # Баннер
     banner = None
