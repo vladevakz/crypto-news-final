@@ -20,10 +20,9 @@ window.switchTab = function(tabName) {
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     const target = $(`tab-${tabName}`);
     if (target) target.classList.add('active');
-    // Найти кнопку, которая вызвала событие, и подсветить её
     const btn = document.querySelector(`.tab-btn[onclick*="${tabName}"]`);
     if (btn) btn.classList.add('active');
-    else event.target.classList.add('active');
+    else if (event && event.target) event.target.classList.add('active');
 };
 
 // --- Вспомогательные функции ---
@@ -34,8 +33,6 @@ function showStatus(elementId, message, type) {
 function githubHeaders() {
     return { 'Authorization': `token ${GH_TOKEN}`, 'Accept': 'application/vnd.github+json' };
 }
-
-// Проверка токена GitHub
 function requireToken() {
     if (!GH_TOKEN) {
         alert('Сначала сохраните GitHub Token на вкладке "Настройки"');
@@ -410,6 +407,72 @@ window.updateCron = async function(wf, inputId) {
         });
         showStatus('cron-status', `✅ ${wf} обновлён`, 'success');
     } catch(e) { showStatus('cron-status','❌ Ошибка','error'); }
+};
+
+// --- График ближайших запусков ---
+window.calcNextRuns = function() {
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const seconds = now.getSeconds();
+    const currentTotalMinutes = hours * 60 + minutes;
+
+    // Новости: каждые 3 часа (кратно 3)
+    const nextNewsHour = Math.ceil(hours / 3) * 3;
+    let nextNews = new Date(now);
+    nextNews.setHours(nextNewsHour, 0, 0, 0);
+    if (nextNews <= now) nextNews.setHours(nextNews.getHours() + 3);
+    const diffNewsMs = nextNews - now;
+    const newsMin = Math.floor(diffNewsMs / 60000);
+    const newsSec = Math.floor((diffNewsMs % 60000) / 1000);
+
+    // Ответы: каждые 30 минут (0, 30)
+    let nextReplyMinute = Math.ceil(minutes / 30) * 30;
+    let nextReply = new Date(now);
+    nextReply.setMinutes(nextReplyMinute, 0, 0);
+    if (nextReply <= now) nextReply.setMinutes(nextReply.getMinutes() + 30);
+    const diffReplyMs = nextReply - now;
+    const replyMin = Math.floor(diffReplyMs / 60000);
+    const replySec = Math.floor((diffReplyMs % 60000) / 1000);
+
+    $('next-runs-output').innerHTML = `
+        <b>📰 Новости:</b> через ${newsMin} мин ${newsSec} сек<br>
+        <b>💬 Ответы:</b> через ${replyMin} мин ${replySec} сек
+    `;
+};
+
+// --- Тестовый чат с AI ---
+window.testAIChat = async function() {
+    if (!GROQ_KEY) return alert('Введите Groq API Key в настройках');
+    const input = $('test-chat-input').value.trim();
+    if (!input) return alert('Введите текст запроса');
+    $('test-chat-output').innerHTML = '<span class="status loading">⏳ Думаю...</span>';
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${GROQ_KEY}`
+            },
+            body: JSON.stringify({
+                model: $('chat-model-select') ? $('chat-model-select').value : 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: 'Ты — популярный крипто-блогер. Отвечай живо, с юмором, эмодзи.' },
+                    { role: 'user', content: input }
+                ],
+                temperature: 0.9,
+                max_tokens: 300
+            })
+        });
+        const data = await response.json();
+        if (data.choices && data.choices[0]) {
+            $('test-chat-output').textContent = data.choices[0].message.content;
+        } else {
+            $('test-chat-output').textContent = '❌ Ошибка: ' + (data.error?.message || 'неизвестно');
+        }
+    } catch(e) {
+        $('test-chat-output').textContent = '❌ Сетевая ошибка: ' + e.message;
+    }
 };
 
 // --- AI Models ---
