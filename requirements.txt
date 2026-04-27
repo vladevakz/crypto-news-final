@@ -3,3 +3,4 @@ python-telegram-bot
 deep-translator
 pillow
 requests
+google-generativeai
