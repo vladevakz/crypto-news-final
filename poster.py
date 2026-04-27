@@ -22,7 +22,7 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'  # не забудьте загрузить шрифт в корень репозитория
+FONT_PATH = 'Roboto-Bold.ttf'
 
 # Инициализация Groq
 if GROQ_KEY:
@@ -139,7 +139,8 @@ async def main():
             "- Первая новость уже на баннере, не упоминай её в тексте.\n"
             "- Дай яркий общий заголовок и короткий лид.\n"
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
-            "- Разбей на абзацы, закончи живым вопросом или комментарием."
+            "- Разбей на абзацы, закончи живым вопросом или комментарием.\n"
+            "- ВАЖНО: Вмести весь пост в 900 символов или меньше!"
         )
         models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
         for model_name in models_to_try:
@@ -149,16 +150,20 @@ async def main():
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.9,
-                    max_tokens=800
+                    max_tokens=400  # уменьшено для короткого ответа
                 )
-                ai_text = response.choices[0].message.content.strip()
-                if ai_text and len(ai_text) > 15:
-                    print(f"Groq ({model_name}) сгенерировал пост.")
+                raw = response.choices[0].message.content.strip()
+                if raw and len(raw) > 15:
+                    # Принудительно обрезаем до 1000 символов для безопасности
+                    if len(raw) > 1000:
+                        raw = raw[:997] + "..."
+                    ai_text = raw
+                    print(f"Groq ({model_name}) сгенерировал пост (длина: {len(ai_text)} символов).")
                     break
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
 
-    # --- Fallback ---
+    # --- Fallback (без дублирования) ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
@@ -179,7 +184,8 @@ async def main():
 
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
-        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text)
+        # Отправляем фото с подписью
+        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text[:1024])
     else:
         await bot.send_message(chat_id=CHAT_ID, text=ai_text)
     print("Пост отправлен!")
