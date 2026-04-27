@@ -1,6 +1,15 @@
 const REPO = 'vladevakz/crypto-news-final';
-const TOKEN = prompt('Введите GitHub Personal Access Token (с правами repo и workflow):');
-localStorage.setItem('gh_token', TOKEN);
+let TOKEN = localStorage.getItem('gh_token');
+let GROQ_KEY = localStorage.getItem('groq_key');
+
+if (!TOKEN) {
+    TOKEN = prompt('Введите GitHub Personal Access Token (с правами repo и workflow):');
+    localStorage.setItem('gh_token', TOKEN);
+}
+if (!GROQ_KEY) {
+    GROQ_KEY = prompt('Введите Groq API Key (для проверки Groq, можно ввести позже):');
+    if (GROQ_KEY) localStorage.setItem('groq_key', GROQ_KEY);
+}
 
 const headers = {
     'Authorization': `token ${TOKEN}`,
@@ -67,8 +76,93 @@ async function loadFile(path, elementId) {
     }
 }
 
+// ================== Проверка системы ==================
+async function checkHealth() {
+    const statusDiv = document.getElementById('health-status');
+    statusDiv.innerHTML = '<div class="status loading">⏳ Проверка...</div>';
+
+    const results = [];
+    const groqInput = document.getElementById('groq-key-input').value;
+    const currentGroqKey = groqInput || GROQ_KEY;
+
+    // 1. Проверка GitHub Token
+    try {
+        const userRes = await fetch('https://api.github.com/user', { headers });
+        if (userRes.ok) {
+            results.push('✅ GitHub Token валиден');
+        } else {
+            results.push('❌ Ошибка GitHub Token: ' + (await userRes.json()).message);
+        }
+    } catch (e) {
+        results.push('❌ Сеть / GitHub недоступен');
+    }
+
+    // 2. Проверка наличия workflows
+    try {
+        const wfRes = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows`, { headers });
+        const wfData = await wfRes.json();
+        if (wfData.workflows) {
+            const names = wfData.workflows.map(w => w.name);
+            const hasPost = names.includes('Post News');
+            const hasReply = names.includes('Reply to Messages');
+            results.push(hasPost ? '✅ Workflow "Post News" найден' : '❌ Workflow "Post News" отсутствует');
+            results.push(hasReply ? '✅ Workflow "Reply to Messages" найден' : '❌ Workflow "Reply to Messages" отсутствует');
+        } else {
+            results.push('❌ Не удалось получить список workflows');
+        }
+    } catch (e) {
+        results.push('❌ Ошибка получения workflows');
+    }
+
+    // 3. Проверка Groq API (если ключ предоставлен)
+    if (currentGroqKey) {
+        try {
+            const groqRes = await fetch('https://api.groq.com/openai/v1/models', {
+                headers: { 'Authorization': `Bearer ${currentGroqKey}` }
+            });
+            if (groqRes.ok) {
+                results.push('✅ Groq API доступен');
+            } else {
+                results.push('❌ Groq API ошибка: ' + (await groqRes.json()).error?.message || 'неизвестно');
+            }
+        } catch (e) {
+            results.push('❌ Groq API сеть / недоступен');
+        }
+    } else {
+        results.push('⚠️ Groq Key не введён – проверка пропущена');
+    }
+
+    // 4. Проверка доступа к файлам
+    try {
+        const fRes = await fetch(`https://api.github.com/repos/${REPO}/contents/posted.json`, { headers });
+        results.push(fRes.ok ? '✅ posted.json доступен' : '❌ posted.json не найден');
+    } catch (e) {
+        results.push('❌ Ошибка доступа к posted.json');
+    }
+
+    try {
+        const fRes = await fetch(`https://api.github.com/repos/${REPO}/contents/update_offset.txt`, { headers });
+        results.push(fRes.ok ? '✅ update_offset.txt доступен' : '❌ update_offset.txt не найден');
+    } catch (e) {
+        results.push('❌ Ошибка доступа к update_offset.txt');
+    }
+
+    // Вывод
+    const allOk = results.every(r => r.startsWith('✅') || r.startsWith('⚠️'));
+    let html = results.map(r => `<div>${r}</div>`).join('');
+    html += `<div style="margin-top:8px;font-weight:bold;">${
+        allOk ? '✅ Все системы работают' : '❌ Обнаружены проблемы'
+    }</div>`;
+    statusDiv.innerHTML = html;
+}
+
 // Инициализация
 loadRuns('post-news.yml', 'news-runs');
 loadRuns('reply-messages.yml', 'reply-runs');
 loadFile('posted.json', 'posted-json');
 loadFile('update_offset.txt', 'offset-txt');
+
+// Заполняем поле Groq ключом из localStorage, если есть
+if (GROQ_KEY) {
+    document.getElementById('groq-key-input').value = GROQ_KEY;
+}
