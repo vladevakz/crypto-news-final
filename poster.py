@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-from huggingface_hub import InferenceClient
+import google.generativeai as genai
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+GEMINI_KEY = os.environ.get('GEMINI_API_KEY', None)
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-HF_TOKEN = os.environ.get('HF_TOKEN', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,15 +22,16 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'      # если нет, будет DejaVu Sans Bold
 
-# Инициализация Hugging Face
-hf_client = None
-if HF_TOKEN:
-    print("Hugging Face: ключ найден, создаю клиента.")
-    hf_client = InferenceClient(token=HF_TOKEN)
+# Инициализация Gemini
+if GEMINI_KEY:
+    print("Gemini: ключ найден.")
+    genai.configure(api_key=GEMINI_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')   # бесплатная, рабочая модель
 else:
-    print("Hugging Face: ключ НЕ найден, ИИ не будет использоваться.")
+    print("Gemini: ключ НЕ найден, ИИ не будет использоваться.")
+    model = None
 
 # --- Функции истории ---
 def load_history():
@@ -55,7 +56,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки (с увеличенным шрифтом, без обводки для простоты) ---
+# --- Картинки (крупный шрифт 60pt) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -76,17 +77,14 @@ def create_news_banner(news_title, background_bytes):
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
 
-        # Шрифт 60pt для максимальной выразительности
         if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 60)
         else:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
 
-        # Полупрозрачная плашка
         overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 180))
         image.paste(overlay, (0, 500), overlay)
 
-        # Перенос текста
         max_width = 1200
         words = news_title.split()
         lines = []
@@ -123,7 +121,6 @@ async def main():
         print("Нет новых новостей за сегодня.")
         return
 
-    # Переводим заголовки для баннера и fallback
     translated_titles = []
     for e in fresh_entries:
         try:
@@ -135,10 +132,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Попытка Hugging Face ---
+    # --- Запрос к Gemini ---
     ai_text = None
-    if hf_client:
-        # Промпт с просьбой НЕ включать первую новость (она уже на баннере)
+    if model:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -149,39 +145,13 @@ async def main():
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
         try:
-            response = hf_client.text_generation(
-                prompt,
-                model="mistralai/Mistral-7B-Instruct-v0.1",  # Стабильная модель
-                max_new_tokens=600,
-                temperature=0.9,
-                do_sample=True,
-                top_p=0.95,
-                repetition_penalty=1.1
-            )
-            # response может быть строкой или объектом; приводим к строке
-            ai_text = response.strip() if isinstance(response, str) else str(response).strip()
-            if not ai_text or len(ai_text) < 10:
-                print("Модель вернула пустой ответ, пробуем другую...")
-                raise ValueError("Empty response")
-            print("ИИ сгенерировал пост.")
+            response = model.generate_content(prompt)
+            ai_text = response.text.strip()
+            print("Gemini сгенерировал пост.")
         except Exception as e:
-            print(f"Ошибка Hugging Face: {type(e).__name__}: {e}")
-            # Пробуем запасную модель
-            try:
-                response = hf_client.text_generation(
-                    prompt,
-                    model="google/flan-t5-large",  # крупная модель от Google, хорошо работает
-                    max_new_tokens=600,
-                    temperature=0.9
-                )
-                ai_text = response.strip() if isinstance(response, str) else str(response).strip()
-                if not ai_text or len(ai_text) < 10:
-                    raise ValueError("Empty response from fallback")
-                print("ИИ сгенерировал пост (запасная модель).")
-            except Exception as e2:
-                print(f"Ошибка Hugging Face (вторая модель): {type(e2).__name__}: {e2}")
+            print(f"Ошибка Gemini: {type(e).__name__}: {e}")
 
-    # --- Fallback без ИИ (без дублирования) ---
+    # --- Fallback без дублирования ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
@@ -194,13 +164,12 @@ async def main():
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
-    # --- Баннер ---
+    # --- Баннер и отправка ---
     background = get_background_image()
     banner = None
     if background:
         banner = create_news_banner(banner_title, background)
 
-    # --- Отправка ---
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
         await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text, parse_mode='HTML')
