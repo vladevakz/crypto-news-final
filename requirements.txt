@@ -3,4 +3,4 @@ python-telegram-bot
 deep-translator
 pillow
 requests
-cohere
+huggingface_hub
