@@ -86,6 +86,7 @@
         <button class="tab-btn active" onclick="switchTab('main')">Главная</button>
         <button class="tab-btn" onclick="switchTab('settings')">Настройки</button>
         <button class="tab-btn" onclick="switchTab('tools')">Инструменты</button>
+        <button class="tab-btn" onclick="switchTab('advanced')">Продвинутые</button>
         <button class="tab-btn" onclick="switchTab('data')">Данные</button>
     </div>
 
@@ -212,6 +213,58 @@
             <button class="btn" onclick="uploadBackup()">📤 Восстановить из файла</button>
             <input type="file" id="backup-file-input" accept=".json,.txt" style="display:none">
             <div id="backup-status"></div>
+        </div>
+    </div>
+
+    <!-- Продвинутые -->
+    <div id="tab-advanced" class="tab-pane">
+        <div class="card">
+            <h2>🧠 AI Модели</h2>
+            <label>Модель для текста (Chat)</label>
+            <select id="chat-model-select">
+                <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
+                <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+            </select>
+            <label>Модель для голоса (TTS)</label>
+            <select id="tts-model-select">
+                <option value="canopylabs/orpheus-v1-english">Orpheus (English)</option>
+            </select>
+            <label>Голос TTS</label>
+            <select id="tts-voice-select">
+                <option value="hannah">Hannah</option>
+                <option value="troy">Troy</option>
+                <option value="austin">Austin</option>
+                <option value="cecilia">Cecilia</option>
+                <option value="david">David</option>
+                <option value="mia">Mia</option>
+            </select>
+            <button class="btn" onclick="saveAIModels()">💾 Сохранить модели</button>
+            <div id="models-status"></div>
+        </div>
+
+        <div class="card">
+            <h2>⚙️ Параметры поста</h2>
+            <label>Максимум новостей (MAX_NEWS)</label>
+            <input type="number" id="max-news-input" value="5" min="1" max="10">
+            <button class="btn" onclick="saveMaxNews()">💾 Сохранить</button>
+            <div id="maxnews-status"></div>
+        </div>
+
+        <div class="card">
+            <h2>📊 Лимиты GitHub Actions</h2>
+            <button class="btn" onclick="checkGitHubLimits()">Проверить оставшиеся минуты</button>
+            <div id="limits-output"></div>
+        </div>
+
+        <div class="card">
+            <h2>🔔 Уведомления об ошибках</h2>
+            <label>
+                <input type="checkbox" id="error-notify-checkbox">
+                Отправлять в Telegram при сбоях
+            </label>
+            <button class="btn" onclick="saveErrorNotify()">💾 Сохранить</button>
+            <div id="notify-status"></div>
         </div>
     </div>
 
