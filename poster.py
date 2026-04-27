@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-import cohere
+from openai import OpenAI
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
-COHERE_KEY = os.environ.get('COHERE_APT_KEY', None)   # ← теперь ищет ваш секрет
+DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,17 +22,17 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'
 
-# Инициализация Cohere
-if COHERE_KEY:
-    print("Cohere: ключ найден, создаю клиента.")
-    co = cohere.Client(COHERE_KEY)
+# Инициализация DeepSeek
+if DEEPSEEK_KEY:
+    print("DeepSeek: ключ найден, создаю клиента.")
+    client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
 else:
-    print("Cohere: ключ НЕ найден, ИИ не будет использоваться.")
-    co = None
+    print("DeepSeek: ключ НЕ найден, ИИ не будет использоваться.")
+    client = None
 
-# --- Функции истории ---
+# --- Функции истории (без изменений) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -55,7 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Картинки (крупный шрифт 60pt, обводка для контраста) ---
+# --- Картинки ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -81,7 +81,6 @@ def create_news_banner(news_title, background_bytes):
         else:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
 
-        # Полупрозрачная плашка
         overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 180))
         image.paste(overlay, (0, 500), overlay)
 
@@ -98,12 +97,8 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        # Рисуем с обводкой для контраста
         y = 530
         for line in lines:
-            # черная обводка
-            draw.text((40, y), line, font=font, fill="black", stroke_width=4, stroke_fill="black")
-            # белый текст поверх
             draw.text((40, y), line, font=font, fill="white")
             y += 70
 
@@ -136,9 +131,9 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к Cohere ---
+    # --- Запрос к DeepSeek ---
     ai_text = None
-    if co:
+    if client:
         prompt = (
             "Ты — популярный крипто-блогер. Напиши пост в Telegram на русском для этих новостей:\n"
             f"{headlines_for_ai}\n\n"
@@ -149,18 +144,18 @@ async def main():
             "- Разбей на абзацы, закончи живым вопросом или комментарием."
         )
         try:
-            response = co.generate(
-                model='command-r',
-                prompt=prompt,
-                max_tokens=800,
-                temperature=0.9
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.9,
+                max_tokens=800
             )
-            ai_text = response.generations[0].text.strip()
-            print("Cohere сгенерировал пост.")
+            ai_text = response.choices[0].message.content.strip()
+            print("DeepSeek сгенерировал пост.")
         except Exception as e:
-            print(f"Ошибка Cohere: {type(e).__name__}: {e}")
+            print(f"Ошибка DeepSeek: {type(e).__name__}: {e}")
 
-    # --- Fallback без дублирования ---
+    # --- Fallback ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
@@ -173,7 +168,7 @@ async def main():
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
-    # --- Баннер и отправка ---
+    # --- Отправка ---
     background = get_background_image()
     banner = None
     if background:
