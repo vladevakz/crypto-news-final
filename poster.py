@@ -8,13 +8,13 @@ from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 import asyncio
-import google.generativeai as genai
+import cohere
 
 # --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-GEMINI_KEY = os.environ.get('GEMINI_API_KEY', None)
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
+COHERE_KEY = os.environ.get('COHERE_API_KEY', None)
 RSS_FEED = os.environ.get('RSS_FEED', 'https://decrypt.co/feed')
 
 # --- Настройки ---
@@ -22,12 +22,12 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'  # если загрузите жирный шрифт в корень; иначе будет DejaVu Sans Bold
+FONT_PATH = 'Roboto-Bold.ttf'      # если загружен, иначе будет DejaVu Sans Bold
 
-# Инициализация Gemini
-genai.configure(api_key=GEMINI_KEY)
+# Инициализация Cohere
+co = cohere.Client(COHERE_KEY) if COHERE_KEY else None
 
-# --- Функции истории (без изменений) ---
+# --- Функции истории ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -50,7 +50,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Функции картинок (с fallback-шрифтом) ---
+# --- Картинки ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -66,23 +66,21 @@ def get_background_image(query="crypto blockchain technology"):
         print(f"Unsplash error: {e}")
         return None
 
-def create_news_banner(news_title, background_bytes):
+def create_news_banner(title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
 
-        # Пробуем использовать загруженный Roboto-Bold.ttf
         if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 48)
         else:
-            # если нет – дефолтный жирный DejaVu Sans на GitHub Actions
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
 
         overlay = Image.new('RGBA', (1280, 200), (0, 0, 0, 160))
         image.paste(overlay, (0, 520), overlay)
 
         max_width = 1200
-        words = news_title.split()
+        words = title.split()
         lines = []
         current_line = ""
         for word in words:
@@ -117,73 +115,68 @@ async def main():
         print("Нет новых новостей за сегодня.")
         return
 
-    # Собираем заголовки для ИИ
-    headlines = "\n".join([f"- {e.title}" for e in fresh_entries])
-
-    # Улучшенный промпт – теперь Gemini будет стараться делать пост «с перчинкой»
-    prompt = (
-        "Ты — популярный крипто-блогер с отличным чувством юмора. У тебя есть пять свежих заголовков:\n"
-        f"{headlines}\n\n"
-        "Сделай из этого яркий пост для Telegram на русском языке. Строго следуй правилам:\n"
-        "1. Придумай цепляющий заголовок для всего поста (обязательно с эмодзи), который заинтригует.\n"
-        "2. Для каждой новости дай одну короткую, но сочную фразу с личным мнением (ироничным, дерзким, но профессиональным).\n"
-        "3. Разбавляй эмодзи, не перегружай.\n"
-        "4. Разбей текст на абзацы, чтобы читалось легко.\n"
-        "5. Никаких списков вида «1. 2. 3.» – просто живой текст.\n\n"
-        "Формат вывода:\n"
-        "🔥 ТВОЙ ЗАГОЛОВОК\n\n"
-        "Короткий лид-абзац.\n\n"
-        "• Пояснение первой новости\n\n"
-        "• Пояснение второй новости\n\n"
-        "... и так далее\n\n"
-        "Живой комментарий в конце.\n"
-    )
-
-    # Пытаемся получить креативный пост от Gemini
-    ai_text = None
-    try:
-        # Пробуем актуальную бесплатную модель
-        model = genai.GenerativeModel('gemini-1.0-pro')
-        response = model.generate_content(prompt)
-        ai_text = response.text
-        print("ИИ сгенерировал креативный пост (gemini-1.0-pro).")
-    except Exception as e:
-        print(f"Ошибка Gemini (первая модель): {type(e).__name__}: {e}")
+    # Переводим заголовки (для баннера и fallback)
+    translated_titles = []
+    for e in fresh_entries:
         try:
-            # Пробуем другую модель
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            response = model.generate_content(prompt)
-            ai_text = response.text
-            print("ИИ сгенерировал креативный пост (gemini-1.5-flash-latest).")
-        except Exception as e2:
-            print(f"Ошибка Gemini (вторая модель): {type(e2).__name__}: {e2}")
+            translated_titles.append(TRANSLATOR.translate(e.title))
+        except:
+            translated_titles.append(e.title)
 
-    # Если Gemini не смог или отказался – делаем обычный перевод с форматированием
+    # Готовим данные для баннера (первый заголовок)
+    banner_title = translated_titles[0]
+    # Убираем первый заголовок из списка для текста, чтобы не дублировать
+    body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
+    headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
+
+    # --- Попытка получить пост через Cohere ---
+    ai_text = None
+    if co:
+        prompt = (
+            "Ты — популярный крипто-блогер с отличным чувством юмора. У тебя есть пять заголовков новостей:\n"
+            f"{headlines_for_ai}\n\n"
+            "Важно: на баннере уже будет крупно написан заголовок первой новости, поэтому НЕ включай его в текст поста. "
+            "Напиши живой пост для Telegram на русском языке. Следуй правилам:\n"
+            "1. Придумай яркий общий заголовок (с эмодзи) и короткий лид-абзац — это будет начало поста.\n"
+            "2. Затем для каждой новости (начиная со второй, первую пропускаем) дай один-два сочных предложения с личным мнением.\n"
+            "3. Разбивай текст на абзацы, используй эмодзи умеренно.\n"
+            "4. В конце — короткий живой комментарий или вопрос читателям.\n"
+            "Формат: сначала общий заголовок и лид, потом каждая новость с новой строки, без нумерации.\n"
+        )
+        try:
+            response = co.generate(
+                model='command-r',
+                prompt=prompt,
+                max_tokens=800,
+                temperature=0.9
+            )
+            ai_text = response.generations[0].text.strip()
+            print("Cohere сгенерировал пост.")
+        except Exception as e:
+            print(f"Ошибка Cohere: {e}")
+
+    # Если Cohere не сработал, делаем fallback с эмодзи и без первого заголовка
     if not ai_text:
         print("Используем fallback-перевод с эмодзи.")
-        post_lines = [""]  # пустая строка корректно инициализирована
-        for i, entry in enumerate(fresh_entries, 1):
-            try:
-                trans_title = TRANSLATOR.translate(entry.title)
-            except:
-                trans_title = entry.title
-            emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i-1] if i <= 5 else "🔹"
-            post_lines.append(f"{emoji} {trans_title}")
-        post_lines.insert(0, "🔥 *Топ-5 новостей криптомира:*\n")
-        ai_text = "\n\n".join(post_lines)
+        post_lines = [""
+        if body_titles:
+            emojis = ["🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]  # начиная со второго
+            for i, t in enumerate(body_titles):
+                emoji = emojis[i] if i < len(emojis) else "🔹"
+                post_lines.append(f"{emoji} {t}")
+        if post_lines:
+            post_lines.insert(0, "🔥 *Главные новости криптомира:*\n")
+            ai_text = "\n\n".join(post_lines)
+        else:
+            ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
-    # Баннер
-    banner = None
+    # --- Баннер ---
     background = get_background_image()
+    banner = None
     if background:
-        first_title = fresh_entries[0].title
-        try:
-            first_title = TRANSLATOR.translate(first_title)
-        except:
-            pass
-        banner = create_news_banner(first_title, background)
+        banner = create_news_banner(banner_title, background)
 
-    # Отправка
+    # --- Отправка ---
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
         await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text, parse_mode='HTML')
