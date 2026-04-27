@@ -21,7 +21,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_APT_KEY: ${{ secrets.GEMINI_APT_KEY }}          # ← исправлено
+          COHERE_APT_KEY: ${{ secrets.COHERE_APT_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python poster.py
       - name: Зафиксировать изменения истории
