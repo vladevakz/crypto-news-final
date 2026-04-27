@@ -86,7 +86,7 @@
             max-height: 200px;
             overflow-y: auto;
         }
-        input[type="password"] {
+        input, textarea {
             width: 100%;
             padding: 12px;
             margin: 8px 0;
@@ -95,12 +95,24 @@
             background: #12121c;
             color: #e0e0e0;
             font-size: 0.9rem;
+            font-family: inherit;
         }
         .small { font-size: 0.8rem; color: #aaa; margin: 4px 0; }
+        a { color: #64b5f6; }
     </style>
 </head>
 <body>
     <h1>🚀 Crypto Bot Admin</h1>
+
+    <div class="card">
+        <h2>⚙️ Настройки</h2>
+        <input type="password" id="gh-token-input" placeholder="GitHub Token">
+        <input type="password" id="tg-bot-token-input" placeholder="Telegram Bot Token">
+        <input type="text" id="tg-chat-id-input" placeholder="Telegram Chat ID (для новостей)">
+        <input type="password" id="groq-key-input" placeholder="Groq API Key">
+        <button class="btn" onclick="saveSettings()">💾 Сохранить</button>
+        <div id="settings-status"></div>
+    </div>
 
     <div class="card">
         <h2>⚡ Управление</h2>
@@ -111,10 +123,32 @@
 
     <div class="card">
         <h2>🩺 Проверка системы</h2>
-        <p class="small">Проверит GitHub Token, Groq API, наличие workflows и файлов.</p>
-        <input type="password" id="groq-key-input" placeholder="Groq API Key (для проверки)">
         <button class="btn" onclick="checkHealth()" id="health-btn">🔍 Проверить всё</button>
         <div id="health-status"></div>
+    </div>
+
+    <div class="card">
+        <h2>🛠 Расширенные функции</h2>
+
+        <label style="font-size:0.9rem;">⏱ Расписание новостей (cron)</label>
+        <input type="text" id="news-cron" value="0 */3 * * *">
+        <button class="btn" onclick="updateCron('post-news.yml', 'news-cron')">Обновить новости</button>
+
+        <label style="font-size:0.9rem; margin-top:8px;">⏱ Расписание ответов (cron)</label>
+        <input type="text" id="reply-cron" value="*/30 * * * *">
+        <button class="btn" onclick="updateCron('reply-messages.yml', 'reply-cron')">Обновить ответы</button>
+
+        <button class="btn" onclick="viewLatestLogs()">📋 Логи последнего запуска ответов</button>
+        <div id="logs-output" style="font-size:0.8rem; margin-top:8px; max-height:200px; overflow-y:auto;"></div>
+
+        <button class="btn" onclick="resetHistory()">🗑 Сбросить историю (posted.json, offset.txt)</button>
+        <div id="reset-status"></div>
+
+        <button class="btn" onclick="testMessage()">✉️ Тестовое сообщение в канал</button>
+        <div id="test-msg-status"></div>
+
+        <button class="btn" onclick="groqStats()">📊 Статистика Groq API</button>
+        <div id="groq-stats-output"></div>
     </div>
 
     <div class="card">
