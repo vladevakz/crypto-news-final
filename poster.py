@@ -158,9 +158,9 @@ async def main():
     # Если Cohere не сработал, делаем fallback с эмодзи и без первого заголовка
     if not ai_text:
         print("Используем fallback-перевод с эмодзи.")
-        post_lines = [""
+        post_lines = [""]  # <-- исправлено: скобка закрыта
         if body_titles:
-            emojis = ["🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]  # начиная со второго
+            emojis = ["🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]
             for i, t in enumerate(body_titles):
                 emoji = emojis[i] if i < len(emojis) else "🔹"
                 post_lines.append(f"{emoji} {t}")
