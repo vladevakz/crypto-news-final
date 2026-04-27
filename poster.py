@@ -1,55 +1,63 @@
 import os
 import io
 import json
+import sys
+import asyncio
+import tempfile
+import subprocess
 import feedparser
 import requests
 from datetime import date, datetime
 from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
-import asyncio
+from telegram.error import TelegramError
 from openai import OpenAI
 
 # --- Переменные окружения (секреты GitHub) ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
-CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+CHAT_ID = os.environ['TELEGRAM_CHAT_ID']          # канал/чат для новостей
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
 GROQ_KEY = os.environ.get('GROQ_API_KEY', None)
 
-# --- Список RSS-источников (можно редактировать) ---
+# --- Настройки ---
 RSS_FEEDS = [
     'https://decrypt.co/feed',
     'https://www.coindesk.com/arc/outboundfeeds/rss/',
     'https://cointelegraph.com/rss',
     'https://www.cnbc.com/id/10001147/device/rss/rss.html'
 ]
-
-# --- Настройки ---
 MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
+
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'   # если загружен, иначе DejaVuSans-Bold
+OFFSET_FILE = 'update_offset.txt'
+FONT_PATH = 'Roboto-Bold.ttf'
 
 # Инициализация Groq
 if GROQ_KEY:
-    print("Groq: ключ найден, создаю клиента.")
     client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1")
 else:
-    print("Groq: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
-# --- Функции для истории (чтобы не повторяться) ---
-def load_history():
+# -------------------- Утилиты истории --------------------
+def load_json(filename, default=None):
     try:
-        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+        with open(filename, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        return default if default is not None else {}
+
+def save_json(filename, data):
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_history():
+    return load_json(HISTORY_FILE, {})
 
 def save_history(history):
-    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    save_json(HISTORY_FILE, history)
 
 def filter_fresh_entries(entries, history):
     today = str(date.today())
@@ -62,11 +70,21 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
-# --- Сбор и отбор популярных новостей ---
+def load_offset():
+    try:
+        with open(OFFSET_FILE, 'r') as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+def save_offset(offset):
+    with open(OFFSET_FILE, 'w') as f:
+        f.write(str(offset))
+
+# -------------------- Сбор новостей --------------------
 def fetch_all_feeds():
     all_entries = []
     seen_urls = set()
-
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
@@ -88,7 +106,7 @@ def fetch_all_feeds():
     all_entries.sort(key=get_pub_date, reverse=True)
     return all_entries[:MAX_NEWS]
 
-# --- Картинки (баннер с динамической плашкой и отступами) ---
+# -------------------- Картинки (баннер) --------------------
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -108,7 +126,7 @@ def create_news_banner(news_title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
-
+        font = None
         if os.path.exists(FONT_PATH):
             font = ImageFont.truetype(FONT_PATH, 64)
         else:
@@ -127,14 +145,11 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        # Параметры плашки
         line_height = 80
         padding_top = 30
         padding_bottom = 30
         total_text_height = line_height * len(lines)
         overlay_height = total_text_height + padding_top + padding_bottom
-
-        # Плашка внизу, с отступом 20px от края
         overlay_y = 720 - overlay_height - 20
         if overlay_y < 0:
             overlay_y = 0
@@ -142,7 +157,6 @@ def create_news_banner(news_title, background_bytes):
         overlay = Image.new('RGBA', (1280, overlay_height), (0, 0, 0, 180))
         image.paste(overlay, (0, overlay_y), overlay)
 
-        # Рисуем текст внутри плашки
         y = overlay_y + padding_top
         stroke_width = 5
         for line in lines:
@@ -158,18 +172,62 @@ def create_news_banner(news_title, background_bytes):
         print(f"Pillow error: {e}")
         return None
 
-# --- Главная логика ---
-async def main():
+# -------------------- Синтез речи (Groq Orpheus) --------------------
+def generate_voice(text: str) -> io.BytesIO | None:
+    """Генерирует голосовое сообщение через Groq Orpheus TTS и конвертирует в OGG."""
+    if not client:
+        print("Groq клиент не инициализирован, синтез речи невозможен.")
+        return None
+
+    try:
+        print(f"Синтезирую голос для текста: {text[:70]}...")
+        response = client.audio.speech.create(
+            model="canopylabs/orpheus-v1-english",
+            voice="hannah",  # Можно сменить: troy, austin, cecilia, david, mia
+            input=text,
+            response_format="wav"
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+            response.write_to_file(tmp_wav.name)
+            wav_path = tmp_wav.name
+
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_ogg:
+            ogg_path = tmp_ogg.name
+
+        subprocess.run([
+            'ffmpeg', '-y', '-i', wav_path,
+            '-ac', '1', '-ar', '48000', '-c:a', 'libopus', '-b:a', '64k',
+            ogg_path
+        ], check=True, capture_output=True)
+
+        with open(ogg_path, 'rb') as f:
+            voice_data = io.BytesIO(f.read())
+        voice_data.seek(0)
+
+        os.unlink(wav_path)
+        os.unlink(ogg_path)
+
+        print(f"Голосовое сообщение сгенерировано ({voice_data.getbuffer().nbytes} байт)")
+        return voice_data
+
+    except Exception as e:
+        print(f"Ошибка при синтезе речи: {e}")
+        return None
+
+# -------------------- Публикация новостей --------------------
+async def post_news():
     history = load_history()
     fresh_entries = fetch_all_feeds()
     if not fresh_entries:
         print("Нет новостей.")
-        return
+        return False
 
     fresh_entries = filter_fresh_entries(fresh_entries, history)[:MAX_NEWS]
     if not fresh_entries:
         print("Нет новых новостей за сегодня (все уже были).")
-        return
+        save_history(history)
+        return True
 
     translated_titles = []
     for e in fresh_entries:
@@ -182,7 +240,6 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Генерация через Groq ---
     ai_text = None
     if client:
         prompt = (
@@ -215,33 +272,146 @@ async def main():
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
 
-    # --- Fallback ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
             emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-            post_lines = []
-            for i, t in enumerate(body_titles):
-                emoji = emojis[i] if i < len(emojis) else "🔹"
-                post_lines.append(f"{emoji} {t}")
+            post_lines = [f"{emojis[i] if i < len(emojis) else '🔹'} {t}" for i, t in enumerate(body_titles)]
             ai_text = "\n\n".join(post_lines)
         else:
             ai_text = "🔥 Сегодня одна важная новость (см. на баннере)."
 
-    # --- Баннер и отправка ---
     background = get_background_image()
     banner = None
     if background:
         banner = create_news_banner(banner_title, background)
 
     bot = Bot(token=TELEGRAM_TOKEN)
-    if banner:
-        await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text[:1024])
-    else:
-        await bot.send_message(chat_id=CHAT_ID, text=ai_text)
-    print("Пост отправлен!")
+    try:
+        if banner:
+            await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text[:1024])
+        else:
+            await bot.send_message(chat_id=CHAT_ID, text=ai_text)
+        print("Пост отправлен!")
+    except Exception as e:
+        print(f"Ошибка отправки поста: {e}")
+        return False
 
     save_history(history)
+    return True
+
+# -------------------- Ответы на личные сообщения --------------------
+async def reply_to_messages():
+    if not client:
+        print("Нет Groq ключа, ответы отключены.")
+        return
+
+    bot = Bot(token=TELEGRAM_TOKEN)
+    offset = load_offset()
+    print(f"Проверяю сообщения, начиная с offset={offset}")
+
+    try:
+        updates = await bot.get_updates(offset=offset, timeout=10, limit=10)
+    except Exception as e:
+        print(f"Ошибка получения обновлений: {e}")
+        return
+
+    if not updates:
+        print("Нет новых сообщений.")
+        return
+
+    for update in updates:
+        if update.update_id > offset:
+            offset = update.update_id
+        msg = update.message
+        if not msg or not msg.text and not msg.voice:
+            continue
+
+        user_text = None
+        is_voice_message = False
+
+        if msg.text:
+            user_text = msg.text
+        elif msg.voice:
+            is_voice_message = True
+            voice_file = await bot.get_file(msg.voice.file_id)
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".ogg") as tmp:
+                await voice_file.download_to_drive(tmp.name)
+                try:
+                    audio_bytes = open(tmp.name, "rb").read()
+                    transcription = client.audio.transcriptions.create(
+                        model="whisper-large-v3",
+                        file=("voice.ogg", audio_bytes, "audio/ogg"),
+                        response_format="text"
+                    )
+                    user_text = transcription.strip()
+                    print(f"Распознан текст: {user_text}")
+                except Exception as e:
+                    print(f"Ошибка распознавания: {e}")
+                    await bot.send_message(chat_id=msg.chat_id, text="🎧 Не смог распознать голос.")
+                    continue
+
+        if not user_text:
+            continue
+
+        # Защита от нежелательных тем
+        system_prompt = (
+            "Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. "
+            "Отвечай живо, с юмором, эмодзи, как человек, но оставайся в теме крипты/технологий. "
+            "Если вопрос про погоду, жизнь, повседневность — отвечай легко и с шуткой. "
+            "Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, "
+            "ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на криптовалюты, "
+            "задай встречный вопрос о биткоине, Web3 или любимом альткоине. "
+            "Ни в коем случае не высказывай собственного мнения по политике или вере. "
+            "Примеры ухода: "
+            "'Ха-ха, даже биткоин не так волатилен, как политика! Лучше скажи, ты ETH или SOL держишь?' "
+            "или 'О, это сложнее, чем понять консенсус в децентрализованной сети. Давай про крипту?' "
+        )
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text}
+                ],
+                temperature=0.9,
+                max_tokens=500
+            )
+            reply_text = response.choices[0].message.content.strip()
+
+            if is_voice_message:
+                # Отвечаем голосом + текст
+                voice_data = generate_voice(reply_text)
+                if voice_data:
+                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data)
+                    # Дублируем текст под голосовым
+                    await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+                else:
+                    await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+            else:
+                await bot.send_message(chat_id=msg.chat_id, text=reply_text)
+
+            print(f"Ответ отправлен на сообщение {msg.message_id}")
+        except Exception as e:
+            print(f"Ошибка генерации ответа: {e}")
+            await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.")
+
+    offset += 1
+    save_offset(offset)
+    print(f"Offset обновлён: {offset}")
+
+# -------------------- Точка входа --------------------
+async def main():
+    mode = 'all'
+    if '--post' in sys.argv:
+        mode = 'post'
+    elif '--reply' in sys.argv:
+        mode = 'reply'
+
+    if mode in ('post', 'all'):
+        await post_news()
+    if mode in ('reply', 'all'):
+        await reply_to_messages()
 
 if __name__ == '__main__':
     asyncio.run(main())
