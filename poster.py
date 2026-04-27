@@ -10,7 +10,7 @@ from telegram import Bot
 import asyncio
 from openai import OpenAI
 
-# --- Переменные окружения ---
+# --- Переменные окружения (секреты GitHub) ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
@@ -22,7 +22,7 @@ MAX_NEWS = 5
 TRANSLATOR = GoogleTranslator(source='auto', target='ru')
 feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
-FONT_PATH = 'Roboto-Bold.ttf'
+FONT_PATH = 'Roboto-Bold.ttf'   # если файла нет, используется DejaVuSans-Bold
 
 # Инициализация Groq
 if GROQ_KEY:
@@ -32,7 +32,7 @@ else:
     print("Groq: ключ НЕ найден, ИИ не будет использоваться.")
     client = None
 
-# --- Функции истории, картинок и т.д. (без изменений) ---
+# --- Функции для истории (чтобы не повторяться) ---
 def load_history():
     try:
         with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -55,6 +55,7 @@ def filter_fresh_entries(entries, history):
     history[today] = list(sent_titles)
     return fresh
 
+# --- Картинки (баннер с жирным шрифтом) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -74,14 +75,18 @@ def create_news_banner(news_title, background_bytes):
     try:
         image = Image.open(io.BytesIO(background_bytes)).resize((1280, 720), Image.LANCZOS)
         draw = ImageDraw.Draw(image)
+
+        # Крупный жирный шрифт (64pt) с обводкой
         if os.path.exists(FONT_PATH):
-            font = ImageFont.truetype(FONT_PATH, 60)
+            font = ImageFont.truetype(FONT_PATH, 64)
         else:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
 
-        overlay = Image.new('RGBA', (1280, 220), (0, 0, 0, 180))
-        image.paste(overlay, (0, 500), overlay)
+        # Широкая плашка, начинается выше (y=460), чтобы текст не прилипал к низу
+        overlay = Image.new('RGBA', (1280, 260), (0, 0, 0, 180))
+        image.paste(overlay, (0, 460), overlay)
 
+        # Перенос строк
         max_width = 1200
         words = news_title.split()
         lines = []
@@ -95,10 +100,13 @@ def create_news_banner(news_title, background_bytes):
                 current_line = word
         lines.append(current_line)
 
-        y = 530
+        # Рисуем с жирной чёрной обводкой
+        y = 490
+        stroke_width = 5
         for line in lines:
+            draw.text((40, y), line, font=font, fill="black", stroke_width=stroke_width, stroke_fill="black")
             draw.text((40, y), line, font=font, fill="white")
-            y += 70
+            y += 80
 
         buf = io.BytesIO()
         image.save(buf, format='JPEG')
@@ -129,7 +137,7 @@ async def main():
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
 
-    # --- Запрос к Groq ---
+    # --- Генерация поста через Groq ---
     ai_text = None
     if client:
         prompt = (
@@ -140,7 +148,7 @@ async def main():
             "- Дай яркий общий заголовок и короткий лид.\n"
             "- Для каждой оставшейся новости дай 1-2 сочных предложения с эмодзи.\n"
             "- Разбей на абзацы, закончи живым вопросом или комментарием.\n"
-            "- ВАЖНО: Вмести весь пост в 900 символов или меньше!"
+            "- ОБЯЗАТЕЛЬНО умести всё в 800 символов или меньше!"
         )
         models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
         for model_name in models_to_try:
@@ -150,20 +158,20 @@ async def main():
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.9,
-                    max_tokens=400  # уменьшено для короткого ответа
+                    max_tokens=400
                 )
                 raw = response.choices[0].message.content.strip()
                 if raw and len(raw) > 15:
-                    # Принудительно обрезаем до 1000 символов для безопасности
+                    # На всякий случай обрезаем до 1000 символов
                     if len(raw) > 1000:
                         raw = raw[:997] + "..."
                     ai_text = raw
-                    print(f"Groq ({model_name}) сгенерировал пост (длина: {len(ai_text)} символов).")
+                    print(f"Groq ({model_name}) сгенерировал пост ({len(ai_text)} символов).")
                     break
             except Exception as e:
                 print(f"Ошибка с моделью {model_name}: {type(e).__name__}: {e}")
 
-    # --- Fallback (без дублирования) ---
+    # --- Если ИИ не сработал – красивый запасной вариант ---
     if not ai_text:
         print("Используем fallback-перевод.")
         if body_titles:
@@ -184,7 +192,7 @@ async def main():
 
     bot = Bot(token=TELEGRAM_TOKEN)
     if banner:
-        # Отправляем фото с подписью
+        # Telegram разрешает максимум 1024 символа в подписи
         await bot.send_photo(chat_id=CHAT_ID, photo=banner, caption=ai_text[:1024])
     else:
         await bot.send_message(chat_id=CHAT_ID, text=ai_text)
