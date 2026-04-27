@@ -142,12 +142,21 @@ async def main():
     # Пытаемся получить креативный пост от Gemini
     ai_text = None
     try:
-        model = genai.GenerativeModel('gemini-pro')
+    # Пробуем актуальную бесплатную модель
+    model = genai.GenerativeModel('gemini-1.0-pro')
+    response = model.generate_content(prompt)
+    ai_text = response.text
+    print("ИИ сгенерировал креативный пост.")
+except Exception as e:
+    print(f"Ошибка Gemini: {type(e).__name__}: {e}")
+    # Попробуем ещё одну модель, если первая не сработала
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         ai_text = response.text
-        print("ИИ сгенерировал креативный пост.")
-    except Exception as e:
-        print(f"Ошибка Gemini: {e}")
+        print("ИИ сгенерировал креативный пост (через gemini-1.5-flash-latest).")
+    except Exception as e2:
+        print(f"Ошибка Gemini (вторая попытка): {type(e2).__name__}: {e2}")
 
     # Если Gemini не смог или отказался – делаем обычный перевод с форматированием
     if not ai_text:
