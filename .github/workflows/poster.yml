@@ -1,28 +1,39 @@
-name: Crypto News Poster
+name: Crypto News Poster and Reply Bot
+
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '0 */3 * * *'   # каждые 3 часа
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
-  post-news:
+  bot-job:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - name: Запустить бота
+
+      - name: Install system dependencies (ffmpeg for voice TTS)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot (post news + reply to messages)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
-        run: python poster.py
-      - name: Зафиксировать изменения истории
+        run: python poster.py --all
+
+      - name: Commit changes (posted.json, update_offset.txt)
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update posted.json"
-          file_pattern: "posted.json"
+          commit_message: "Update history & offset [skip ci]"
+          file_pattern: "posted.json update_offset.txt"
