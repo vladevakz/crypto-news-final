@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # разрешаем пушить изменения в репозиторий
+  contents: write
 
 jobs:
   post-news:
@@ -26,7 +26,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python poster.py
 
       - name: Зафиксировать изменения истории
