@@ -44,10 +44,6 @@
             font-size: 0.9rem; font-family: inherit;
         }
         textarea { min-height: 80px; }
-        pre {
-            background: #12121c; padding: 8px; border-radius: 8px;
-            font-size: 0.75rem; max-height: 150px; overflow: auto; white-space: pre-wrap;
-        }
         .tab-row { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
         .tab-btn {
             flex: 1; padding: 8px 4px; background: #2d2d44; color: #ccc;
@@ -56,9 +52,6 @@
         .tab-btn.active { background: #1565c0; color: #fff; }
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
-        .feed-item { display: flex; gap: 4px; align-items: center; margin: 4px 0; }
-        .feed-item input { flex: 1; }
-        .feed-item button { padding: 4px 8px; background: #c62828; color: #fff; border: none; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -80,23 +73,19 @@
             <button class="btn blue" id="reply-btn">💬 Ответить на сообщения</button>
             <div id="dispatch-status"></div>
         </div>
-
         <div class="card">
             <h2>🩺 Проверка системы</h2>
             <button class="btn" id="health-btn">🔍 Проверить всё</button>
             <div id="health-status"></div>
         </div>
-
         <div class="card">
             <h2>📊 Статистика новостей</h2>
             <div id="news-stats">Загрузка...</div>
         </div>
-
         <div class="card">
             <h2>📰 Последние запуски (Новости)</h2>
             <div id="news-runs">...</div>
         </div>
-
         <div class="card">
             <h2>💬 Последние запуски (Ответы)</h2>
             <div id="reply-runs">...</div>
@@ -114,7 +103,6 @@
             <button class="btn" id="save-settings-btn">💾 Сохранить</button>
             <div id="settings-status"></div>
         </div>
-
         <div class="card">
             <h2>📡 RSS-источники</h2>
             <div id="feeds-list">Загрузка...</div>
@@ -123,21 +111,18 @@
             <button class="btn" id="save-feeds-btn">💾 Сохранить все</button>
             <div id="feeds-status"></div>
         </div>
-
         <div class="card">
             <h2>🧠 Промпт для ответов</h2>
             <textarea id="system-prompt-input">Загрузка...</textarea>
             <button class="btn" id="save-prompt-btn">💾 Сохранить промпт</button>
             <div id="prompt-status"></div>
         </div>
-
         <div class="card">
             <h2>🚫 Запрещённые темы</h2>
             <textarea id="blocked-input" placeholder="слова через запятую"></textarea>
             <button class="btn" id="save-blocked-btn">💾 Сохранить</button>
             <div id="blocked-status"></div>
         </div>
-
         <div class="card">
             <h2>🖼 Запрос Unsplash</h2>
             <input type="text" id="unsplash-query-input" placeholder="crypto blockchain">
@@ -154,55 +139,43 @@
             <input type="text" id="news-cron" value="0 */3 * * *">
             <button class="btn" id="update-news-cron-btn">Обновить новости</button>
             <label>Ответы</label>
-            <input type="text" id="reply-cron" value="*/30 * * * *">
+            <input type="text" id="reply-cron" value="*/20 * * * *">
             <button class="btn" id="update-reply-cron-btn">Обновить ответы</button>
             <div id="cron-status"></div>
         </div>
-
         <div class="card">
             <h2>✉️ Отправить сообщение</h2>
             <textarea id="custom-msg-text" placeholder="Текст сообщения..."></textarea>
             <button class="btn" id="send-custom-msg-btn">Отправить в канал</button>
             <div id="custom-msg-status"></div>
         </div>
-
         <div class="card">
             <h2>📋 Логи последнего запуска ответов</h2>
             <button class="btn" id="view-logs-btn">Показать</button>
             <div id="logs-output"></div>
         </div>
-
         <div class="card">
             <h2>📬 Последние входящие (Telegram)</h2>
             <button class="btn" id="load-messages-btn">Загрузить</button>
             <div id="recent-messages"></div>
         </div>
-
         <div class="card">
             <h2>🧹 Сброс истории</h2>
             <button class="btn" id="reset-history-btn">🗑 Сбросить posted.json и offset</button>
             <div id="reset-status"></div>
         </div>
-
         <div class="card">
             <h2>📦 Резервное копирование</h2>
-            <button class="btn" id="download-backup-btn">📥 Скачать posted.json + offset.txt</button>
+            <button class="btn" id="download-backup-btn">📥 Скачать бэкап</button>
             <button class="btn" id="upload-backup-btn">📤 Восстановить из файла</button>
-            <input type="file" id="backup-file-input" accept=".json,.txt" style="display:none">
+            <input type="file" id="backup-file-input" accept=".txt" style="display:none">
             <div id="backup-status"></div>
         </div>
-
-        <div class="card">
-            <h2>⏰ Ближайшие запуски</h2>
-            <button class="btn" id="calc-next-runs-btn">🔄 Рассчитать</button>
-            <div id="next-runs-output" style="font-size:0.9rem; margin-top:6px;"></div>
-        </div>
-
         <div class="card">
             <h2>💬 Тестовый чат с AI</h2>
             <input type="text" id="test-chat-input" placeholder="Привет, бот!">
             <button class="btn" id="test-ai-chat-btn">🤖 Спросить</button>
-            <div id="test-chat-output" style="font-size:0.9rem; margin-top:6px; white-space:pre-wrap;"></div>
+            <div id="test-chat-output" style="margin-top:6px;"></div>
         </div>
     </div>
 
@@ -210,15 +183,11 @@
     <div id="tab-advanced" class="tab-pane">
         <div class="card">
             <h2>🧠 AI Модели</h2>
-            <label>Модель для текста (Chat)</label>
+            <label>Модель для текста</label>
             <select id="chat-model-select">
                 <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
                 <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
                 <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
-            </select>
-            <label>Модель для голоса (TTS)</label>
-            <select id="tts-model-select">
-                <option value="canopylabs/orpheus-v1-english">Orpheus (English)</option>
             </select>
             <label>Голос TTS</label>
             <select id="tts-voice-select">
@@ -229,53 +198,24 @@
                 <option value="david">David</option>
                 <option value="mia">Mia</option>
             </select>
-            <button class="btn" id="save-models-btn">💾 Сохранить модели</button>
-            <div id="models-status"></div>
+            <button class="btn" id="save-models-btn">💾 Сохранить</button>
         </div>
-
         <div class="card">
-            <h2>⚙️ Параметры поста</h2>
-            <label>Максимум новостей (MAX_NEWS)</label>
+            <h2>⚙️ MAX_NEWS</h2>
             <input type="number" id="max-news-input" value="5" min="1" max="10">
             <button class="btn" id="save-max-news-btn">💾 Сохранить</button>
-            <div id="maxnews-status"></div>
         </div>
-
         <div class="card">
-            <h2>📊 Лимиты GitHub Actions</h2>
-            <button class="btn" id="check-limits-btn">Проверить оставшиеся минуты</button>
-            <div id="limits-output"></div>
-        </div>
-
-        <div class="card">
-            <h2>🔔 Уведомления об ошибках</h2>
-            <label>
-                <input type="checkbox" id="error-notify-checkbox">
-                Отправлять в Telegram при сбоях
-            </label>
+            <h2>🔔 Уведомления</h2>
+            <label><input type="checkbox" id="error-notify-checkbox"> Отправлять в Telegram при сбоях</label>
             <button class="btn" id="save-notify-btn">💾 Сохранить</button>
-            <div id="notify-status"></div>
         </div>
     </div>
 
     <!-- Данные -->
     <div id="tab-data" class="tab-pane">
-        <div class="card">
-            <h2>📄 posted.json</h2>
-            <pre id="posted-json">...</pre>
-        </div>
-        <div class="card">
-            <h2>📄 update_offset.txt</h2>
-            <pre id="offset-txt">...</pre>
-        </div>
-        <div class="card">
-            <h2>📄 feeds.json</h2>
-            <pre id="feeds-json">...</pre>
-        </div>
-        <div class="card">
-            <h2>📄 prompt.json</h2>
-            <pre id="prompt-json">...</pre>
-        </div>
+        <div class="card"><h2>posted.json</h2><pre id="posted-json">...</pre></div>
+        <div class="card"><h2>update_offset.txt</h2><pre id="offset-txt">...</pre></div>
     </div>
 
     <script src="app.js"></script>
