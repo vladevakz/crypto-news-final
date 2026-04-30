@@ -2,7 +2,7 @@ name: Reply to Messages
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/20 * * * *'   # каждые 20 минут
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies (ffmpeg for voice TTS)
+      - name: Install system dependencies (ffmpeg)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install Python dependencies
@@ -37,7 +37,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add update_offset.txt
-          git commit -m "Update message offset [skip ci]" || echo "No changes to commit"
+          git add update_offset.txt mute.json user_prefs.json
+          git commit -m "Update offset, mute, prefs [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
