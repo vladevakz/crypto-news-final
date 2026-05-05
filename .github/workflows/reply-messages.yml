@@ -34,10 +34,13 @@ jobs:
         run: python poster.py --reply
 
       - name: Commit and push changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add update_offset.txt mute.json user_prefs.json
-          git commit -m "Update offset, mute, prefs [skip ci]" || echo "No changes"
-          git pull --rebase origin main
-          git push origin main
+  run: |
+    git config user.name "github-actions[bot]"
+    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    # Гарантируем существование файлов, даже если их ещё нет в репозитории
+    [ ! -f mute.json ] && echo '{"muted":[]}' > mute.json
+    [ ! -f user_prefs.json ] && echo '{}' > user_prefs.json
+    git add update_offset.txt mute.json user_prefs.json
+    git commit -m "Update offset, mute, prefs [skip ci]" || echo "No changes"
+    git pull --rebase origin main
+    git push origin main
