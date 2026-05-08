@@ -343,7 +343,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша", с контекстом цитаты) --------------------
+# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша" или в ответ на бота) --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -452,11 +452,17 @@ async def reply_to_messages():
             )
             continue
 
-        # ========== ГЛАВНЫЙ ФИЛЬТР: реагируем только на сообщения с "Яша" ==========
-        if not is_addressed_to_yasha(user_text):
-            print(f"Игнорируем (не обращено к Яше): {user_text[:60]}")
+        # ========== ГЛАВНЫЙ ФИЛЬТР ==========
+        # Определяем, нужно ли отвечать:
+        # 1. Сообщение адресовано Яше (есть "яша" в тексте)
+        # 2. Сообщение является ответом на сообщение бота (цитирует бота)
+        addressed = is_addressed_to_yasha(user_text)
+        is_reply_to_bot = msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.is_bot
+
+        if not addressed and not is_reply_to_bot:
+            print(f"Игнорируем (не обращено к Яше и не ответ боту): {user_text[:60]}")
             continue
-        # =====================================================================
+        # =====================================
 
         # --- Формирование контекста с учётом цитируемого сообщения ---
         messages = []
@@ -475,7 +481,7 @@ async def reply_to_messages():
             quoted_text = msg.reply_to_message.text
             quoted_from_bot = msg.reply_to_message.from_user.is_bot if msg.reply_to_message.from_user else False
             if quoted_from_bot:
-                # Цитируется ответ бота — добавляем его как сообщение ассистента
+                # Цитируется ответ бота — добавляем как сообщение ассистента
                 messages.append({"role": "assistant", "content": quoted_text})
             else:
                 # Цитируется сообщение пользователя — добавляем как ещё один user-контекст
