@@ -5,3 +5,4 @@ pillow
 python-telegram-bot
 openai
 matplotlib
+duckduckgo_search
