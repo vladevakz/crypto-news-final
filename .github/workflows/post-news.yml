@@ -2,7 +2,7 @@ name: Post News
 
 on:
   schedule:
-    - cron: '0 */3 * * *'   # каждые 3 часа
+    - cron: '0 */8 * * *'   # каждые 3 часа
   workflow_dispatch:
 
 permissions:
