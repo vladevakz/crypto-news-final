@@ -628,22 +628,14 @@ async def reply_to_messages():
         is_reply_to_bot = msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.is_bot
         if not addressed and not is_reply_to_bot:
             continue
-        # График
-        if contains_any(user_text, CHART_KEYWORDS):
-            coin_id = detect_coin_id(user_text)
-            chart_buf = generate_chart(coin_id)
-            if chart_buf:
-                caption = f"Вот график {coin_id.upper()} (1h) с уровнями поддержки и сопротивления."
-                if is_voice:
-                    voice_data = generate_voice(caption)
-                    if voice_data:
-                        await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
-                await bot.send_photo(chat_id=msg.chat_id, photo=chart_buf, caption=caption, reply_to_message_id=msg.message_id)
-            else:
-                await bot.send_message(chat_id=msg.chat_id, text="Не удалось получить данные для графика. Попробуйте позже.", reply_to_message_id=msg.message_id)
-            continue
-        # Анализ / мнение
-        if contains_any(user_text, ANALYSIS_KEYWORDS):
+
+        # Флаги для разных типов ответа
+        do_chart = contains_any(user_text, CHART_KEYWORDS)
+        do_analysis = contains_any(user_text, ANALYSIS_KEYWORDS)
+        do_regular = not (do_chart or do_analysis)
+
+        # --- Анализ (если нужно) ---
+        if do_analysis:
             question = user_text.lower()
             for phrase in ANALYSIS_KEYWORDS + ['яша', 'яш']:
                 question = question.replace(phrase, '')
@@ -657,36 +649,52 @@ async def reply_to_messages():
                 if voice_data:
                     await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
             await bot.send_message(chat_id=msg.chat_id, text=opinion, reply_to_message_id=msg.message_id)
-            continue
-        # Обычный ответ
-        models = load_models()
-        chat_model = models.get('chat', 'llama-3.3-70b-versatile')
-        messages = [{"role": "system", "content": "Ты — дружелюбный помощник Яша. Отвечай живо, с юмором, эмодзи. Избегай политики, религии, национализма."}]
-        if msg.reply_to_message and msg.reply_to_message.text:
-            quoted = msg.reply_to_message.text
-            if msg.reply_to_message.from_user.is_bot:
-                messages.append({"role": "assistant", "content": quoted})
+
+        # --- График (если нужно) ---
+        if do_chart:
+            coin_id = detect_coin_id(user_text)
+            chart_buf = generate_chart(coin_id)
+            if chart_buf:
+                caption = f"Вот график {coin_id.upper()} (1h) с уровнями поддержки и сопротивления."
+                if is_voice:
+                    voice_data = generate_voice(caption)
+                    if voice_data:
+                        await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
+                await bot.send_photo(chat_id=msg.chat_id, photo=chart_buf, caption=caption, reply_to_message_id=msg.message_id)
             else:
-                messages.append({"role": "user", "content": quoted})
-        messages.append({"role": "user", "content": user_text})
-        try:
-            response = client.chat.completions.create(
-                model=chat_model,
-                messages=messages,
-                temperature=0.9,
-                max_tokens=500
-            )
-            reply_text = response.choices[0].message.content.strip()
-            if is_voice:
-                voice_data = generate_voice(reply_text)
-                if voice_data:
-                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
+                await bot.send_message(chat_id=msg.chat_id, text="Не удалось получить данные для графика. Попробуйте позже.", reply_to_message_id=msg.message_id)
+
+        # --- Обычный ответ (если нет ни анализа, ни графика) ---
+        if do_regular:
+            models = load_models()
+            chat_model = models.get('chat', 'llama-3.3-70b-versatile')
+            messages = [{"role": "system", "content": "Ты — дружелюбный помощник Яша. Отвечай живо, с юмором, эмодзи. Избегай политики, религии, национализма."}]
+            if msg.reply_to_message and msg.reply_to_message.text:
+                quoted = msg.reply_to_message.text
+                if msg.reply_to_message.from_user.is_bot:
+                    messages.append({"role": "assistant", "content": quoted})
+                else:
+                    messages.append({"role": "user", "content": quoted})
+            messages.append({"role": "user", "content": user_text})
+            try:
+                response = client.chat.completions.create(
+                    model=chat_model,
+                    messages=messages,
+                    temperature=0.9,
+                    max_tokens=500
+                )
+                reply_text = response.choices[0].message.content.strip()
+                if is_voice:
+                    voice_data = generate_voice(reply_text)
+                    if voice_data:
+                        await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
+                    else:
+                        await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
                 else:
                     await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
-            else:
-                await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
-        except:
-            await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.", reply_to_message_id=msg.message_id)
+            except:
+                await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.", reply_to_message_id=msg.message_id)
+
     save_offset(offset + 1)
 
 async def main():
