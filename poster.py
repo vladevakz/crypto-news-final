@@ -5,7 +5,7 @@ import sys
 import asyncio
 import tempfile
 import subprocess
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import feedparser
 import requests
 from deep_translator import GoogleTranslator
@@ -18,9 +18,9 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
-# --- Переменные окружения (секреты GitHub) ---
+# --- Переменные окружения ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
-CHAT_ID = os.environ['TELEGRAM_CHAT_ID']          # канал/чат для новостей
+CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 UNSPLASH_KEY = os.environ.get('UNSPLASH_ACCESS_KEY', None)
 GROQ_KEY = os.environ.get('GROQ_API_KEY', None)
 
@@ -38,17 +38,15 @@ feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
 OFFSET_FILE = 'update_offset.txt'
 MUTE_FILE = 'mute.json'
-USER_PREFS_FILE = 'user_prefs.json'
 FONT_PATH = 'Roboto-Bold.ttf'
 
-# Инициализация Groq
 client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_KEY else None
 
-# --- Фразы для mute / unmute ---
+# --- Mute/unmute фразы ---
 MUTE_PHRASES = [
     'не отвечай', 'перестань отвечать', 'больше не отвечай', 'не пиши', 'замолчи',
-    'отстань', 'молчи', 'не нужно отвечать', 'не отвечайте мне', 'не надо отвечать',
-    'перестань писать', 'больше не пиши', 'не хочу получать сообщения', 'отключи ответы'
+    'отстань', 'молчи', 'не нужно отвечать', 'не надо отвечать',
+    'перестань писать', 'больше не пиши', 'отключи ответы'
 ]
 UNMUTE_PHRASES = [
     'можешь отвечать', 'отвечай', 'снова отвечай', 'начни отвечать', 'разрешаю отвечать',
@@ -56,25 +54,18 @@ UNMUTE_PHRASES = [
     'я снова хочу получать сообщения', 'давай отвечай'
 ]
 
-# --- Запросы на график ---
 CHART_KEYWORDS = ['график', 'тренд', 'цена', 'поддержка', 'сопротивление', 'куда движется', 'покажи график']
-SYMBOL_MAP = {
-    'биткоин': 'BTCUSDT', 'bitcoin': 'BTCUSDT', 'btc': 'BTCUSDT',
-    'эфириум': 'ETHUSDT', 'ethereum': 'ETHUSDT', 'eth': 'ETHUSDT',
-    'солана': 'SOLUSDT', 'solana': 'SOLUSDT', 'sol': 'SOLUSDT',
-    'доге': 'DOGEUSDT', 'doge': 'DOGEUSDT',
-    'bnb': 'BNBUSDT', 'xrp': 'XRPUSDT', 'ada': 'ADAUSDT',
-    'matic': 'MATICUSDT', 'avax': 'AVAXUSDT', 'dot': 'DOTUSDT',
-    'link': 'LINKUSDT', 'uni': 'UNIUSDT',
-}
-CG_ID_MAP = {
-    'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'SOLUSDT': 'solana',
-    'DOGEUSDT': 'dogecoin', 'BNBUSDT': 'binancecoin', 'XRPUSDT': 'ripple',
-    'ADAUSDT': 'cardano', 'MATICUSDT': 'matic-network', 'AVAXUSDT': 'avalanche-2',
-    'DOTUSDT': 'polkadot', 'LINKUSDT': 'chainlink', 'UNIUSDT': 'uniswap',
+# Локальный словарь для быстрого поиска (популярные монеты)
+SYMBOL_TO_ID = {
+    'биткоин': 'bitcoin', 'bitcoin': 'bitcoin', 'btc': 'bitcoin',
+    'эфириум': 'ethereum', 'ethereum': 'ethereum', 'eth': 'ethereum',
+    'солана': 'solana', 'solana': 'solana', 'sol': 'solana',
+    'доге': 'dogecoin', 'doge': 'dogecoin',
+    'bnb': 'binancecoin', 'xrp': 'ripple', 'ada': 'cardano',
+    'matic': 'matic-network', 'avax': 'avalanche-2', 'dot': 'polkadot',
+    'link': 'chainlink', 'uni': 'uniswap',
 }
 
-# -------------------- Утилиты mute --------------------
 def load_mute_list():
     try:
         with open(MUTE_FILE, 'r', encoding='utf-8') as f:
@@ -87,18 +78,6 @@ def save_mute_list(muted_set):
     with open(MUTE_FILE, 'w', encoding='utf-8') as f:
         json.dump({"muted": list(muted_set)}, f, ensure_ascii=False, indent=2)
 
-def load_user_prefs():
-    try:
-        with open(USER_PREFS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def save_user_prefs(prefs):
-    with open(USER_PREFS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(prefs, f, ensure_ascii=False, indent=2)
-
-# -------------------- Утилиты истории --------------------
 def load_json(filename, default=None):
     try:
         with open(filename, 'r', encoding='utf-8') as f:
@@ -143,17 +122,63 @@ def contains_any(text, phrases):
     return any(phrase in text_lower for phrase in phrases)
 
 def is_addressed_to_yasha(text):
-    if not text:
-        return False
-    return 'яша' in text.lower()
+    return 'яша' in text.lower() if text else False
 
-# -------------------- График --------------------
-def detect_symbol(text):
+# --- Работа с CoinGecko API ---
+def search_coin_id(query):
+    """Ищет ID монеты через CoinGecko Search API."""
+    url = f'https://api.coingecko.com/api/v3/search?query={query}'
+    try:
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        if 'coins' in data and data['coins']:
+            # Берём первый результат
+            return data['coins'][0]['id']
+    except Exception as e:
+        print(f"CoinGecko search error: {e}")
+    return None
+
+def detect_coin_id(text):
+    """Определяет CoinGecko ID по тексту сообщения."""
     text_lower = text.lower()
-    for key, symbol in SYMBOL_MAP.items():
+    # Сначала пробуем локальный словарь
+    for key, cid in SYMBOL_TO_ID.items():
         if key in text_lower:
-            return symbol
-    return 'BTCUSDT'
+            return cid
+    # Иначе ищем через API
+    # Извлекаем возможное название: берём слова после ключевых слов (график, цена и т.п.)
+    # Простой подход: удаляем ключевые слова, берём оставшиеся слова как название монеты
+    query = text_lower
+    for kw in CHART_KEYWORDS + ['яша', 'покажи', 'график', 'цены', 'цену']:
+        query = query.replace(kw, '')
+    query = query.strip().strip('.,!?')
+    if not query:
+        return 'bitcoin'  # по умолчанию
+    # Ищем через API
+    cid = search_coin_id(query)
+    return cid if cid else 'bitcoin'
+
+def fetch_coingecko_ohlc(coin_id, days=30):
+    """Получает свечи через CoinGecko (бесплатно)."""
+    url = f'https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc?vs_currency=usd&days={days}'
+    try:
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+        if not isinstance(data, list) or len(data) < 10:
+            return None
+        ohlc = []
+        for point in data:
+            ohlc.append({
+                'time': datetime.fromtimestamp(point[0]/1000),
+                'open': point[1],
+                'high': point[2],
+                'low': point[3],
+                'close': point[4]
+            })
+        return ohlc[-200:]  # последние 200 свечей
+    except Exception as e:
+        print(f"CoinGecko OHLC error: {e}")
+        return None
 
 def fetch_binance_klines(symbol, interval='1h', limit=200):
     url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
@@ -166,33 +191,14 @@ def fetch_binance_klines(symbol, interval='1h', limit=200):
         for k in data:
             ohlc.append({
                 'time': datetime.fromtimestamp(k[0]/1000),
-                'open': float(k[1]), 'high': float(k[2]),
-                'low': float(k[3]), 'close': float(k[4])
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4])
             })
         return ohlc
     except Exception as e:
         print(f"Binance error: {e}")
-        return None
-
-def fetch_coingecko_ohlc(symbol, days=30):
-    coin_id = CG_ID_MAP.get(symbol, 'bitcoin')
-    url = f'https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc?vs_currency=usd&days={days}'
-    try:
-        resp = requests.get(url, timeout=15)
-        data = resp.json()
-        if not isinstance(data, list) or len(data) < 10:
-            return None
-        ohlc = []
-        for point in data:
-            ohlc.append({
-                'time': datetime.fromtimestamp(point[0]/1000),
-                'open': point[1], 'high': point[2],
-                'low': point[3], 'close': point[4]
-            })
-        print(f"CoinGecko вернул {len(ohlc)} свечей для {symbol}")
-        return ohlc[-200:]
-    except Exception as e:
-        print(f"CoinGecko error: {e}")
         return None
 
 def find_support_resistance(ohlc, window=10):
@@ -208,13 +214,25 @@ def find_support_resistance(ohlc, window=10):
             resistance.append((ohlc[i]['time'], highs[i]))
     return support, resistance
 
-def generate_chart(symbol, timeframe_str='1 час'):
-    ohlc = fetch_binance_klines(symbol, '1h', 200)
-    source = 'Binance'
+def generate_chart(coin_id):
+    """Генерирует график по CoinGecko ID. При возможности использует Binance для популярных."""
+    # Пробуем Binance для известных тикеров
+    # Обратный маппинг ID -> тикер Binance (неполный, только для популярных)
+    reverse_map = {
+        'bitcoin': 'BTCUSDT', 'ethereum': 'ETHUSDT', 'solana': 'SOLUSDT',
+        'dogecoin': 'DOGEUSDT', 'binancecoin': 'BNBUSDT', 'ripple': 'XRPUSDT',
+        'cardano': 'ADAUSDT', 'matic-network': 'MATICUSDT', 'avalanche-2': 'AVAXUSDT',
+        'polkadot': 'DOTUSDT', 'chainlink': 'LINKUSDT', 'uniswap': 'UNIUSDT'
+    }
+    symbol = reverse_map.get(coin_id)
+    ohlc = None
+    source = 'CoinGecko'
+    if symbol:
+        ohlc = fetch_binance_klines(symbol, '1h', 200)
+        if ohlc:
+            source = 'Binance'
     if not ohlc:
-        print(f"Binance не ответил для {symbol}, пробую CoinGecko...")
-        ohlc = fetch_coingecko_ohlc(symbol, 30)
-        source = 'CoinGecko'
+        ohlc = fetch_coingecko_ohlc(coin_id, 30)
     if not ohlc:
         return None
 
@@ -246,7 +264,7 @@ def generate_chart(symbol, timeframe_str='1 час'):
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
     plt.xticks(rotation=45)
     ax.legend()
-    ax.set_title(f'{symbol} (1h, источник: {source})')
+    ax.set_title(f'{coin_id.upper()} (1h, источник: {source})')
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
 
@@ -256,7 +274,7 @@ def generate_chart(symbol, timeframe_str='1 час'):
     buf.seek(0)
     return buf
 
-# -------------------- Сбор новостей --------------------
+# --- Новости ---
 def fetch_all_feeds():
     all_entries, seen_urls = [], set()
     for url in RSS_FEEDS:
@@ -267,9 +285,8 @@ def fetch_all_feeds():
                 if link and link not in seen_urls:
                     seen_urls.add(link)
                     all_entries.append(entry)
-            print(f"Источник {url}: получено {len(feed.entries)} записей")
         except Exception as e:
-            print(f"Ошибка при парсинге {url}: {e}")
+            print(f"Ошибка парсинга {url}: {e}")
     def get_pub_date(entry):
         try:
             return datetime(*entry.published_parsed[:6])
@@ -288,8 +305,7 @@ def get_background_image(query="crypto blockchain technology"):
         resp = requests.get(url, params=params, headers=headers, timeout=10)
         data = resp.json()
         return requests.get(data["urls"]["regular"]).content
-    except Exception as e:
-        print(f"Unsplash error: {e}")
+    except:
         return None
 
 def create_news_banner(news_title, background_bytes):
@@ -327,15 +343,13 @@ def create_news_banner(news_title, background_bytes):
         image.save(buf, format='JPEG')
         buf.seek(0)
         return buf
-    except Exception as e:
-        print(f"Pillow error: {e}")
+    except:
         return None
 
-def generate_voice(text: str) -> io.BytesIO | None:
+def generate_voice(text: str):
     if not client:
         return None
     try:
-        print(f"Синтезирую голос: {text[:70]}...")
         response = client.audio.speech.create(
             model="canopylabs/orpheus-v1-english",
             voice="hannah",
@@ -358,11 +372,9 @@ def generate_voice(text: str) -> io.BytesIO | None:
         os.unlink(wav_path)
         os.unlink(ogg_path)
         return voice_data
-    except Exception as e:
-        print(f"Ошибка синтеза речи: {e}")
+    except:
         return None
 
-# -------------------- Публикация новостей --------------------
 async def post_news():
     history = load_history()
     fresh_entries = fetch_all_feeds()
@@ -371,7 +383,6 @@ async def post_news():
         return
     fresh_entries = filter_fresh_entries(fresh_entries, history)[:MAX_NEWS]
     if not fresh_entries:
-        print("Нет новых новостей за сегодня.")
         save_history(history)
         return
     translated_titles = []
@@ -408,8 +419,8 @@ async def post_news():
                 if raw and len(raw) > 15:
                     ai_text = raw[:1000]
                     break
-            except Exception as e:
-                print(f"Ошибка с моделью {model_name}: {e}")
+            except:
+                pass
     if not ai_text:
         if body_titles:
             emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
@@ -425,26 +436,21 @@ async def post_news():
         else:
             await bot.send_message(chat_id=CHAT_ID, text=ai_text)
         print("Пост отправлен!")
-    except Exception as e:
-        print(f"Ошибка отправки поста: {e}")
+    except:
+        pass
     save_history(history)
 
-# -------------------- Ответы на сообщения --------------------
 async def reply_to_messages():
     if not client:
-        print("Нет Groq ключа, ответы отключены.")
         return
     bot = Bot(token=TELEGRAM_TOKEN)
     offset = load_offset()
     mute_set = load_mute_list()
-    print(f"Проверяю сообщения, начиная с offset={offset}")
     try:
         updates = await bot.get_updates(offset=offset, timeout=10, limit=10)
-    except Exception as e:
-        print(f"Ошибка получения обновлений: {e}")
+    except:
         return
     if not updates:
-        print("Нет новых сообщений.")
         return
     for update in updates:
         if update.update_id > offset:
@@ -459,8 +465,6 @@ async def reply_to_messages():
                 mute_set.discard(user_id)
                 save_mute_list(mute_set)
                 await bot.send_message(chat_id=msg.chat_id, text="Я снова буду отвечать на ваши сообщения!", reply_to_message_id=msg.message_id)
-            else:
-                print(f"Пропущено сообщение от пользователя {user_id} (в муте).")
             continue
         # Админы и боты
         admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
@@ -468,17 +472,17 @@ async def reply_to_messages():
         if admin_ids_str:
             try:
                 ADMIN_IDS = set(int(uid.strip()) for uid in admin_ids_str.split(',') if uid.strip())
-            except ValueError:
+            except:
                 pass
         if (user_id and user_id in ADMIN_IDS) or (msg.from_user and msg.from_user.is_bot):
             continue
         # Текст или голос
         user_text = None
-        is_voice_message = False
+        is_voice = False
         if msg.text:
             user_text = msg.text
         elif msg.voice:
-            is_voice_message = True
+            is_voice = True
             voice_file = await bot.get_file(msg.voice.file_id)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".ogg") as tmp:
                 await voice_file.download_to_drive(tmp.name)
@@ -490,13 +494,12 @@ async def reply_to_messages():
                         response_format="text"
                     )
                     user_text = transcription.strip()
-                except Exception as e:
-                    print(f"Ошибка распознавания голоса: {e}")
+                except:
                     await bot.send_message(chat_id=msg.chat_id, text="🎧 Не смог распознать голос.", reply_to_message_id=msg.message_id)
                     continue
         if not user_text:
             continue
-        # Команды mute/unmute
+        # MUTE/UNMUTE команды
         if msg.text and contains_any(msg.text, MUTE_PHRASES):
             mute_set.add(user_id)
             save_mute_list(mute_set)
@@ -512,11 +515,11 @@ async def reply_to_messages():
             continue
         # График
         if contains_any(user_text, CHART_KEYWORDS):
-            symbol = detect_symbol(user_text)
-            chart_buf = generate_chart(symbol)
+            coin_id = detect_coin_id(user_text)
+            chart_buf = generate_chart(coin_id)
             if chart_buf:
-                caption = f"Вот график {symbol} (1h) с уровнями поддержки и сопротивления."
-                if is_voice_message:
+                caption = f"Вот график {coin_id.upper()} (1h) с уровнями поддержки и сопротивления."
+                if is_voice:
                     voice_data = generate_voice(caption)
                     if voice_data:
                         await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
@@ -524,7 +527,7 @@ async def reply_to_messages():
             else:
                 await bot.send_message(chat_id=msg.chat_id, text="Не удалось получить данные для графика. Попробуйте позже.", reply_to_message_id=msg.message_id)
             continue
-        # Текстовый ответ с контекстом цитирования
+        # Текстовый ответ
         messages = [{"role": "system", "content": "Ты — дружелюбный помощник Яша. Отвечай живо, с юмором, эмодзи. Избегай политики, религии, национализма."}]
         if msg.reply_to_message and msg.reply_to_message.text:
             quoted = msg.reply_to_message.text
@@ -541,7 +544,7 @@ async def reply_to_messages():
                 max_tokens=500
             )
             reply_text = response.choices[0].message.content.strip()
-            if is_voice_message:
+            if is_voice:
                 voice_data = generate_voice(reply_text)
                 if voice_data:
                     await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
@@ -549,12 +552,10 @@ async def reply_to_messages():
                     await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
             else:
                 await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
-        except Exception as e:
-            print(f"Ошибка генерации ответа: {e}")
+        except:
             await bot.send_message(chat_id=msg.chat_id, text="🤷‍♂️ Что-то пошло не так, попробуй позже.", reply_to_message_id=msg.message_id)
     save_offset(offset + 1)
 
-# -------------------- Точка входа --------------------
 async def main():
     mode = 'all'
     if '--post' in sys.argv:
