@@ -240,12 +240,10 @@
           const prompt = JSON.parse(base64ToUtf8(d.content));
           $('system-prompt-input').value = prompt.system_prompt || '';
         } else {
-          // Файл не найден – подставляем дефолтный промпт
-          $('system-prompt-input').value = 'Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. Отвечай живо, с юмором, эмодзи, как человек, но оставайся в теме крипты/технологий. Если вопрос про погоду, жизнь, повседневность — отвечай легко и с шуткой. Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на криптовалюты, задай встречный вопрос о биткоине, Web3 или любимом альткоине. Ни в коем случае не высказывай собственного мнения по политике или вере.';
+          $('system-prompt-input').value = 'Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. Отвечай живо, с юмором, эмодзи, как человек, но оставайся в теме крипты/технологий.';
         }
       } catch (e) {
-        // Сетевая ошибка – тоже дефолт
-        $('system-prompt-input').value = 'Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. Отвечай живо, с юмором, эмодзи, как человек, но оставайся в теме крипты/технологий. Если вопрос про погоду, жизнь, повседневность — отвечай легко и с шуткой. Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на криптовалюты, задай встречный вопрос о биткоине, Web3 или любимом альткоине. Ни в коем случае не высказывай собственного мнения по политике или вере.';
+        $('system-prompt-input').value = 'Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. Отвечай живо, с юмором, эмодзи, как человек, но оставайся в теме крипты/технологий.';
       }
     }
     $('save-prompt-btn').addEventListener('click', async function() {
@@ -465,7 +463,6 @@
       const hours = now.getHours();
       const minutes = now.getMinutes();
 
-      // Новости каждые 3 часа
       let nextNewsHour = Math.ceil(hours / 3) * 3;
       let nextNews = new Date(now);
       nextNews.setHours(nextNewsHour, 0, 0, 0);
@@ -474,7 +471,6 @@
       const newsMin = Math.floor(diffNewsMs / 60000);
       const newsSec = Math.floor((diffNewsMs % 60000) / 1000);
 
-      // Ответы каждые 20 минут
       let nextReplyMinute = Math.ceil(minutes / 20) * 20;
       let nextReply = new Date(now);
       nextReply.setMinutes(nextReplyMinute, 0, 0);
@@ -524,36 +520,52 @@
       }
     });
 
-    // AI Models
+    // AI Models (с обработкой отсутствующего файла)
     async function loadModelsUI() {
-      const token = localStorage.getItem('gh_token');
-      if (!token) return;
+      if (!localStorage.getItem('gh_token')) return;
       try {
-        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, { headers: githubHeaders() });
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, {
+          headers: githubHeaders()
+        });
         if (r.ok) {
           const d = await r.json();
           const m = JSON.parse(base64ToUtf8(d.content));
-          $('chat-model-select').value = m.chat || 'llama-3.3-70b-versatile';
+          if ($('chat-model-select')) $('chat-model-select').value = m.chat || 'llama-3.3-70b-versatile';
+          if ($('tts-model-select')) $('tts-model-select').value = m.tts || 'canopylabs/orpheus-v1-english';
           if ($('tts-voice-select')) $('tts-voice-select').value = m.voice || 'hannah';
         }
       } catch (e) {}
     }
+
     $('save-models-btn').addEventListener('click', async function() {
+      if (!localStorage.getItem('gh_token')) {
+        alert('Сначала сохраните GitHub Token на вкладке Настройки');
+        return;
+      }
       const data = {
         chat: $('chat-model-select').value,
-        voice: $('tts-voice-select')?.value || 'hannah'
+        tts: $('tts-model-select').value,
+        voice: $('tts-voice-select').value
       };
       try {
-        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, { headers: githubHeaders() });
+        const r = await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, {
+          headers: githubHeaders()
+        });
         const d = await r.json();
         const sha = d.sha || null;
         await fetch(`https://api.github.com/repos/${REPO}/contents/models.json`, {
           method: 'PUT',
           headers: githubHeaders(),
-          body: JSON.stringify({ message: 'Update AI models', content: utf8ToBase64(JSON.stringify(data)), sha })
+          body: JSON.stringify({
+            message: 'Update AI models',
+            content: utf8ToBase64(JSON.stringify(data)),
+            sha
+          })
         });
         showStatus('models-status', '✅ Модели сохранены', 'success');
-      } catch (e) { showStatus('models-status', '❌ Ошибка', 'error'); }
+      } catch (e) {
+        showStatus('models-status', '❌ Ошибка сохранения', 'error');
+      }
     });
     loadModelsUI();
 
