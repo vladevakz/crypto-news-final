@@ -5,13 +5,19 @@ import sys
 import asyncio
 import tempfile
 import subprocess
+from datetime import date, datetime, timedelta
 import feedparser
 import requests
-from datetime import date, datetime
 from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Bot
 from openai import OpenAI
+import matplotlib
+matplotlib.use('Agg')  # Безголовый режим
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import numpy as np
+from collections import deque
 
 # --- Переменные окружения (секреты GitHub) ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
@@ -39,7 +45,7 @@ FONT_PATH = 'Roboto-Bold.ttf'
 # Инициализация Groq
 client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_KEY else None
 
-# --- Фразы для mute / unmute (естественный язык) ---
+# --- Фразы для mute / unmute ---
 MUTE_PHRASES = [
     'не отвечай', 'перестань отвечать', 'больше не отвечай', 'не пиши', 'замолчи',
     'отстань', 'молчи', 'не нужно отвечать', 'не отвечайте мне', 'не надо отвечать',
@@ -51,7 +57,31 @@ UNMUTE_PHRASES = [
     'я снова хочу получать сообщения', 'давай отвечай'
 ]
 
-# -------------------- Утилиты для mute --------------------
+# --- Запросы на график ---
+CHART_KEYWORDS = ['график', 'тренд', 'цена', 'поддержка', 'сопротивление', 'куда движется', 'покажи график']
+SYMBOL_MAP = {
+    'биткоин': 'BTCUSDT',
+    'bitcoin': 'BTCUSDT',
+    'btc': 'BTCUSDT',
+    'эфириум': 'ETHUSDT',
+    'ethereum': 'ETHUSDT',
+    'eth': 'ETHUSDT',
+    'солана': 'SOLUSDT',
+    'solana': 'SOLUSDT',
+    'sol': 'SOLUSDT',
+    'доге': 'DOGEUSDT',
+    'doge': 'DOGEUSDT',
+    'bnb': 'BNBUSDT',
+    'xrp': 'XRPUSDT',
+    'ada': 'ADAUSDT',
+    'matic': 'MATICUSDT',
+    'avax': 'AVAXUSDT',
+    'dot': 'DOTUSDT',
+    'link': 'LINKUSDT',
+    'uni': 'UNIUSDT',
+    'ton': 'TONUSDT',
+}
+
 def load_mute_list():
     try:
         with open(MUTE_FILE, 'r', encoding='utf-8') as f:
@@ -64,7 +94,6 @@ def save_mute_list(muted_set):
     with open(MUTE_FILE, 'w', encoding='utf-8') as f:
         json.dump({"muted": list(muted_set)}, f, ensure_ascii=False, indent=2)
 
-# --- Утилиты для user_prefs (restricted/unrestricted) – оставлены на будущее ---
 def load_user_prefs():
     try:
         with open(USER_PREFS_FILE, 'r', encoding='utf-8') as f:
@@ -76,7 +105,6 @@ def save_user_prefs(prefs):
     with open(USER_PREFS_FILE, 'w', encoding='utf-8') as f:
         json.dump(prefs, f, ensure_ascii=False, indent=2)
 
-# -------------------- Утилиты истории (без изменений) --------------------
 def load_json(filename, default=None):
     try:
         with open(filename, 'r', encoding='utf-8') as f:
@@ -121,10 +149,110 @@ def contains_any(text, phrases):
     return any(phrase in text_lower for phrase in phrases)
 
 def is_addressed_to_yasha(text):
-    """Проверяет, содержит ли сообщение обращение к Яше (регистронезависимо)."""
     if not text:
         return False
     return 'яша' in text.lower()
+
+# -------------------- Генерация графика --------------------
+def detect_symbol(text):
+    """Определяет тикер по тексту."""
+    text_lower = text.lower()
+    for key, symbol in SYMBOL_MAP.items():
+        if key in text_lower:
+            return symbol
+    return 'BTCUSDT'  # по умолчанию биткоин
+
+def fetch_binance_klines(symbol, interval='1h', limit=200):
+    """Получает свечные данные с Binance API."""
+    url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+    try:
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        if not isinstance(data, list):
+            return None
+        ohlc = []
+        for k in data:
+            ohlc.append({
+                'time': datetime.fromtimestamp(k[0]/1000),
+                'open': float(k[1]),
+                'high': float(k[2]),
+                'low': float(k[3]),
+                'close': float(k[4])
+            })
+        return ohlc
+    except Exception as e:
+        print(f"Ошибка получения данных с Binance: {e}")
+        return None
+
+def find_support_resistance(ohlc, window=10):
+    """Находит уровни поддержки и сопротивления по локальным экстремумам."""
+    if len(ohlc) < window*2:
+        return [], []
+    lows = [c['low'] for c in ohlc]
+    highs = [c['high'] for c in ohlc]
+    support = []
+    resistance = []
+    for i in range(window, len(ohlc)-window):
+        if all(lows[i] <= lows[i-j] for j in range(1, window+1)) and all(lows[i] <= lows[i+j] for j in range(1, window+1)):
+            support.append((ohlc[i]['time'], lows[i]))
+        if all(highs[i] >= highs[i-j] for j in range(1, window+1)) and all(highs[i] >= highs[i+j] for j in range(1, window+1)):
+            resistance.append((ohlc[i]['time'], highs[i]))
+    return support, resistance
+
+def generate_chart(symbol, timeframe_str='1 час'):
+    """Генерирует график и возвращает BytesIO с PNG."""
+    # Сопоставление timeframe
+    interval_map = {
+        '1 час': '1h', '1ч': '1h', 'час': '1h', '1h': '1h',
+        '4 часа': '4h', '4ч': '4h', '4h': '4h',
+        '1 день': '1d', 'день': '1d', '1d': '1d'
+    }
+    interval = interval_map.get(timeframe_str.lower(), '1h')
+    ohlc = fetch_binance_klines(symbol, interval, 200)
+    if not ohlc:
+        return None
+
+    support, resistance = find_support_resistance(ohlc)
+
+    # Построение графика
+    fig, ax = plt.subplots(figsize=(10, 5))
+    times = [c['time'] for c in ohlc]
+    # Свечи
+    for i, c in enumerate(ohlc):
+        color = '#26a69a' if c['close'] >= c['open'] else '#ef5350'
+        ax.plot([times[i], times[i]], [c['low'], c['high']], color='black', linewidth=0.5)
+        body_height = abs(c['close'] - c['open'])
+        ax.add_patch(plt.Rectangle(
+            (mdates.date2num(times[i]) - 0.02, min(c['open'], c['close'])),
+            0.04, body_height if body_height > 0 else 0.0001,
+            facecolor=color, edgecolor='black', linewidth=0.5
+        ))
+
+    # Скользящие средние
+    closes = np.array([c['close'] for c in ohlc])
+    ma20 = np.convolve(closes, np.ones(20)/20, mode='valid')
+    ma50 = np.convolve(closes, np.ones(50)/50, mode='valid')
+    ax.plot(times[19:], ma20, color='blue', linewidth=1, label='MA20')
+    ax.plot(times[49:], ma50, color='orange', linewidth=1, label='MA50')
+
+    # Уровни поддержки/сопротивления
+    for t, price in support:
+        ax.axhline(y=price, color='green', linestyle='--', linewidth=0.8, alpha=0.7)
+    for t, price in resistance:
+        ax.axhline(y=price, color='red', linestyle='--', linewidth=0.8, alpha=0.7)
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d.%m %H:%M'))
+    plt.xticks(rotation=45)
+    ax.legend()
+    ax.set_title(f'{symbol} ({interval})')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 # -------------------- Сбор новостей (без изменений) --------------------
 def fetch_all_feeds():
@@ -151,7 +279,6 @@ def fetch_all_feeds():
     all_entries.sort(key=get_pub_date, reverse=True)
     return all_entries[:MAX_NEWS]
 
-# -------------------- Картинки (без изменений) --------------------
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
@@ -217,7 +344,6 @@ def create_news_banner(news_title, background_bytes):
         print(f"Pillow error: {e}")
         return None
 
-# -------------------- Синтез речи (Groq Orpheus) --------------------
 def generate_voice(text: str) -> io.BytesIO | None:
     if not client:
         print("Groq клиент не инициализирован, синтез речи невозможен.")
@@ -259,7 +385,6 @@ def generate_voice(text: str) -> io.BytesIO | None:
         print(f"Ошибка при синтезе речи: {e}")
         return None
 
-# -------------------- Публикация новостей --------------------
 async def post_news():
     history = load_history()
     fresh_entries = fetch_all_feeds()
@@ -343,7 +468,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша" или в ответ на бота) --------------------
+# -------------------- Ответы на сообщения --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -374,7 +499,7 @@ async def reply_to_messages():
 
         user_id = msg.from_user.id if msg.from_user else None
 
-        # --- MUTE/UNMUTE (всегда работает) ---
+        # --- MUTE/UNMUTE ---
         if user_id and user_id in mute_set:
             if msg.text and contains_any(msg.text, UNMUTE_PHRASES):
                 mute_set.discard(user_id)
@@ -401,7 +526,7 @@ async def reply_to_messages():
             print(f"Пропущено сообщение от админа/бота (ID {user_id})")
             continue
 
-        # Получаем текст сообщения (распознаём голос)
+        # Получаем текст
         user_text = None
         is_voice_message = False
         if msg.text:
@@ -432,7 +557,7 @@ async def reply_to_messages():
         if not user_text:
             continue
 
-        # --- Запросы на MUTE/UNMUTE (текстовые) ---
+        # --- MUTE/UNMUTE команды ---
         if msg.text and contains_any(msg.text, MUTE_PHRASES):
             mute_set.add(user_id)
             save_mute_list(mute_set)
@@ -452,19 +577,33 @@ async def reply_to_messages():
             )
             continue
 
-        # ========== ГЛАВНЫЙ ФИЛЬТР ==========
-        # Определяем, нужно ли отвечать:
-        # 1. Сообщение адресовано Яше (есть "яша" в тексте)
-        # 2. Сообщение является ответом на сообщение бота (цитирует бота)
+        # --- Проверка обращения к Яше или цитирования ---
         addressed = is_addressed_to_yasha(user_text)
         is_reply_to_bot = msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.is_bot
 
         if not addressed and not is_reply_to_bot:
             print(f"Игнорируем (не обращено к Яше и не ответ боту): {user_text[:60]}")
             continue
-        # =====================================
 
-        # --- Формирование контекста с учётом цитируемого сообщения ---
+        # --- Проверка запроса на график ---
+        if contains_any(user_text, CHART_KEYWORDS):
+            symbol = detect_symbol(user_text)
+            chart_buf = generate_chart(symbol)
+            if chart_buf:
+                caption = f"Вот график {symbol} (1h) с уровнями поддержки и сопротивления."
+                if is_voice_message:
+                    # На голосовое с графиком отвечаем голосом + картинка
+                    voice_data = generate_voice(caption)
+                    if voice_data:
+                        await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
+                await bot.send_photo(chat_id=msg.chat_id, photo=chart_buf, caption=caption, reply_to_message_id=msg.message_id)
+                continue
+            # Если график не получилось создать – отвечаем текстом
+            else:
+                await bot.send_message(chat_id=msg.chat_id, text="Не удалось получить данные для графика. Попробуйте позже.", reply_to_message_id=msg.message_id)
+                continue
+
+        # --- Обычный текстовый ответ ---
         messages = []
         system_prompt = (
             "Ты — дружелюбный помощник, которого зовут Яша. Ты общаешься со своей аудиторией в Telegram. "
@@ -476,21 +615,16 @@ async def reply_to_messages():
         )
         messages.append({"role": "system", "content": system_prompt})
 
-        # Проверяем наличие цитируемого сообщения
         if msg.reply_to_message and msg.reply_to_message.text:
             quoted_text = msg.reply_to_message.text
             quoted_from_bot = msg.reply_to_message.from_user.is_bot if msg.reply_to_message.from_user else False
             if quoted_from_bot:
-                # Цитируется ответ бота — добавляем как сообщение ассистента
                 messages.append({"role": "assistant", "content": quoted_text})
             else:
-                # Цитируется сообщение пользователя — добавляем как ещё один user-контекст
                 messages.append({"role": "user", "content": quoted_text})
-        
-        # Добавляем текущее сообщение пользователя
+
         messages.append({"role": "user", "content": user_text})
 
-        # --- Генерация AI-ответа ---
         try:
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -503,23 +637,11 @@ async def reply_to_messages():
             if is_voice_message:
                 voice_data = generate_voice(reply_text)
                 if voice_data:
-                    await bot.send_voice(
-                        chat_id=msg.chat_id,
-                        voice=voice_data,
-                        reply_to_message_id=msg.message_id
-                    )
+                    await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
                 else:
-                    await bot.send_message(
-                        chat_id=msg.chat_id,
-                        text=reply_text,
-                        reply_to_message_id=msg.message_id
-                    )
+                    await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
             else:
-                await bot.send_message(
-                    chat_id=msg.chat_id,
-                    text=reply_text,
-                    reply_to_message_id=msg.message_id
-                )
+                await bot.send_message(chat_id=msg.chat_id, text=reply_text, reply_to_message_id=msg.message_id)
             print(f"Ответ отправлен на сообщение {msg.message_id}")
         except Exception as e:
             print(f"Ошибка генерации ответа: {e}")
