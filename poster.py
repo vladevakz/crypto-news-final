@@ -343,7 +343,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша") --------------------
+# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша", с контекстом цитаты) --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -352,7 +352,6 @@ async def reply_to_messages():
     bot = Bot(token=TELEGRAM_TOKEN)
     offset = load_offset()
     mute_set = load_mute_list()
-    # user_prefs больше не используется для restricted/unrestricted, но оставим для совместимости
 
     print(f"Проверяю сообщения, начиная с offset={offset}")
 
@@ -459,7 +458,8 @@ async def reply_to_messages():
             continue
         # =====================================================================
 
-        # --- Универсальный промпт (любые темы, кроме запретных) ---
+        # --- Формирование контекста с учётом цитируемого сообщения ---
+        messages = []
         system_prompt = (
             "Ты — дружелюбный помощник, которого зовут Яша. Ты общаешься со своей аудиторией в Telegram. "
             "Отвечай живо, с юмором, эмодзи, как человек, на любые темы. "
@@ -468,15 +468,27 @@ async def reply_to_messages():
             "задай встречный вопрос о любимых фильмах, книгах, увлечениях. "
             "Ни в коем случае не высказывай собственного мнения по политике или вере."
         )
+        messages.append({"role": "system", "content": system_prompt})
+
+        # Проверяем наличие цитируемого сообщения
+        if msg.reply_to_message and msg.reply_to_message.text:
+            quoted_text = msg.reply_to_message.text
+            quoted_from_bot = msg.reply_to_message.from_user.is_bot if msg.reply_to_message.from_user else False
+            if quoted_from_bot:
+                # Цитируется ответ бота — добавляем его как сообщение ассистента
+                messages.append({"role": "assistant", "content": quoted_text})
+            else:
+                # Цитируется сообщение пользователя — добавляем как ещё один user-контекст
+                messages.append({"role": "user", "content": quoted_text})
+        
+        # Добавляем текущее сообщение пользователя
+        messages.append({"role": "user", "content": user_text})
 
         # --- Генерация AI-ответа ---
         try:
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_text}
-                ],
+                messages=messages,
                 temperature=0.9,
                 max_tokens=500
             )
