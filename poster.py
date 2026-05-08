@@ -51,41 +51,6 @@ UNMUTE_PHRASES = [
     'я снова хочу получать сообщения', 'давай отвечай'
 ]
 
-# --- Фразы для unrestricted / restricted (оставлены для совместимости) ---
-UNRESTRICT_PHRASES = [
-    'отвечай на любые темы', 'говори обо всём', 'не только крипта',
-    'можешь отвечать на всё', 'сними ограничения', 'давай без ограничений',
-    'хочу общаться на любые темы', 'отвечай на все вопросы',
-    'перестань ограничиваться криптой', 'будь универсальным'
-]
-RESTRICT_PHRASES = [
-    'только крипта', 'верни ограничения', 'отвечай только про крипту',
-    'ограничься криптой', 'хочу только крипто темы', 'давай про крипту',
-    'не отвлекайся на другие темы', 'будь только крипто-блогером'
-]
-
-# --- Ключевые слова для крипто-фильтра ---
-CRYPTO_KEYWORDS = [
-    'крипто', 'криптовалют', 'биткоин', 'bitcoin', 'btc', 'eth', 'ethereum',
-    'солана', 'solana', 'sol', 'доге', 'doge', 'майнинг', 'mining', 'стейкинг',
-    'стейблкоин', 'stablecoin', 'nft', 'токен', 'token', 'дефи', 'defi', 'web3',
-    'блокчейн', 'blockchain', 'альткоин', 'altcoin', 'шиба', 'shiba', 'uniswap',
-    'pancakeswap', 'метавселенная', 'metaverse', 'децентрализация', 'смарт-контракт',
-    'ило', 'ico', 'ieo', 'айрдроп', 'airdrop', 'фарминг', 'листинг', 'биржа',
-    'курс', 'цена', 'рост', 'падение', 'анализ', 'прогноз', 'график', 'трейдинг',
-    'инвестиции', 'инвест', 'портфель', 'холдить', 'hold', 'фиат', 'обменник',
-    'кошелёк', 'wallet', 'метамask', 'трастовый', 'trustwallet', 'ledger',
-    'секретный ключ', 'сид фраза', 'seed', 'подпись', 'транзакция', 'газ',
-    'gas', 'сеть', 'мемкоин', 'memecoin', 'пул', 'ликвидность', 'ордер',
-    'фибоначчи', 'сопротивление', 'поддержка', 'волатильность', 'шорт', 'лонг',
-    'фьючерс', 'опцион', 'дериватив', 'арбитраж', 'a2z', 'скальпинг'
-]
-
-QUESTION_SIGNALS = ['?', 'что', 'как', 'почему', 'когда', 'где', 'сколько',
-                    'какой', 'какая', 'какое', 'какие', 'чей', 'зачем',
-                    'расскажи', 'объясни', 'посоветуй', 'думаешь', 'считаешь',
-                    'твое мнение', 'анализ', 'прогноз', 'стоит ли', 'правда ли']
-
 # -------------------- Утилиты для mute --------------------
 def load_mute_list():
     try:
@@ -99,7 +64,7 @@ def save_mute_list(muted_set):
     with open(MUTE_FILE, 'w', encoding='utf-8') as f:
         json.dump({"muted": list(muted_set)}, f, ensure_ascii=False, indent=2)
 
-# --- Утилиты для user_prefs (restricted/unrestricted) ---
+# --- Утилиты для user_prefs (restricted/unrestricted) – оставлены на будущее ---
 def load_user_prefs():
     try:
         with open(USER_PREFS_FILE, 'r', encoding='utf-8') as f:
@@ -155,16 +120,11 @@ def contains_any(text, phrases):
     text_lower = text.lower()
     return any(phrase in text_lower for phrase in phrases)
 
-def is_crypto_question(text):
-    """Возвращает True, если сообщение похоже на вопрос о крипте."""
+def is_addressed_to_yasha(text):
+    """Проверяет, содержит ли сообщение обращение к Яше (регистронезависимо)."""
     if not text:
         return False
-    t = text.lower().strip()
-    # Проверка наличия вопросительного знака или вопросительного слова
-    has_question = '?' in t or any(word in t for word in QUESTION_SIGNALS)
-    # Проверка наличия крипто-ключевого слова
-    has_crypto = any(keyword in t for keyword in CRYPTO_KEYWORDS)
-    return has_question and has_crypto
+    return 'яша' in text.lower()
 
 # -------------------- Сбор новостей (без изменений) --------------------
 def fetch_all_feeds():
@@ -383,7 +343,7 @@ async def post_news():
     save_history(history)
     return True
 
-# -------------------- Ответы на сообщения (только крипто-вопросы) --------------------
+# -------------------- Ответы на сообщения (ТОЛЬКО при обращении "Яша") --------------------
 async def reply_to_messages():
     if not client:
         print("Нет Groq ключа, ответы отключены.")
@@ -392,7 +352,7 @@ async def reply_to_messages():
     bot = Bot(token=TELEGRAM_TOKEN)
     offset = load_offset()
     mute_set = load_mute_list()
-    user_prefs = load_user_prefs()
+    # user_prefs больше не используется для restricted/unrestricted, но оставим для совместимости
 
     print(f"Проверяю сообщения, начиная с offset={offset}")
 
@@ -415,7 +375,7 @@ async def reply_to_messages():
 
         user_id = msg.from_user.id if msg.from_user else None
 
-        # --- MUTE/UNMUTE ---
+        # --- MUTE/UNMUTE (всегда работает) ---
         if user_id and user_id in mute_set:
             if msg.text and contains_any(msg.text, UNMUTE_PHRASES):
                 mute_set.discard(user_id)
@@ -460,9 +420,9 @@ async def reply_to_messages():
                         response_format="text"
                     )
                     user_text = transcription.strip()
-                    print(f"Распознан текст: {user_text}")
+                    print(f"Распознан голосовой текст: {user_text}")
                 except Exception as e:
-                    print(f"Ошибка распознавания: {e}")
+                    print(f"Ошибка распознавания голоса: {e}")
                     await bot.send_message(
                         chat_id=msg.chat_id,
                         text="🎧 Не смог распознать голос.",
@@ -473,8 +433,8 @@ async def reply_to_messages():
         if not user_text:
             continue
 
-        # --- Запросы на MUTE/UNMUTE (если пользователь не в муте) ---
-        if contains_any(user_text, MUTE_PHRASES):
+        # --- Запросы на MUTE/UNMUTE (текстовые) ---
+        if msg.text and contains_any(msg.text, MUTE_PHRASES):
             mute_set.add(user_id)
             save_mute_list(mute_set)
             await bot.send_message(
@@ -485,7 +445,7 @@ async def reply_to_messages():
             print(f"Пользователь {user_id} замучен.")
             continue
 
-        if contains_any(user_text, UNMUTE_PHRASES):
+        if msg.text and contains_any(msg.text, UNMUTE_PHRASES):
             await bot.send_message(
                 chat_id=msg.chat_id,
                 text="Я и так могу отвечать! Не переживайте 😊",
@@ -493,57 +453,21 @@ async def reply_to_messages():
             )
             continue
 
-        # --- Переключение restricted/unrestricted (оставлено) ---
-        current_restricted = user_prefs.get(str(user_id), {}).get('restricted', True)
-        if contains_any(user_text, UNRESTRICT_PHRASES):
-            user_prefs[str(user_id)] = {'restricted': False}
-            save_user_prefs(user_prefs)
-            await bot.send_message(
-                chat_id=msg.chat_id,
-                text="Теперь я могу отвечать на любые темы! Но политику и религию всё равно обходим стороной 😉",
-                reply_to_message_id=msg.message_id
-            )
-            print(f"Пользователь {user_id} перешёл в unrestricted режим.")
+        # ========== ГЛАВНЫЙ ФИЛЬТР: реагируем только на сообщения с "Яша" ==========
+        if not is_addressed_to_yasha(user_text):
+            print(f"Игнорируем (не обращено к Яше): {user_text[:60]}")
             continue
+        # =====================================================================
 
-        if contains_any(user_text, RESTRICT_PHRASES):
-            user_prefs[str(user_id)] = {'restricted': True}
-            save_user_prefs(user_prefs)
-            await bot.send_message(
-                chat_id=msg.chat_id,
-                text="Понял, возвращаемся к крипто-тематике! 💎",
-                reply_to_message_id=msg.message_id
-            )
-            print(f"Пользователь {user_id} вернулся к restricted режиму.")
-            continue
-
-        # --- НОВЫЙ ФИЛЬТР: отвечаем ТОЛЬКО на крипто-вопросы ---
-        # Если unrestricted режим не включен (по умолчанию restricted), проверяем
-        if current_restricted and not is_crypto_question(user_text):
-            print(f"Сообщение не является крипто-вопросом, игнорируем: {user_text[:50]}")
-            continue
-
-        # --- Формируем system_prompt ---
-        if current_restricted:
-            system_prompt = (
-                "Ты — популярный крипто-блогер, который отвечает только на вопросы, связанные с криптовалютами. "
-                "Отвечай живо, с юмором, эмодзи, как человек, строго по теме крипты/технологий. "
-                "Если вопрос не про крипту — не отвечай."
-                "Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, "
-                "ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на криптовалюты, "
-                "задай встречный вопрос о биткоине, Web3 или любимом альткоине. "
-                "Ни в коем случае не высказывай собственного мнения по политике или вере."
-            )
-        else:
-            system_prompt = (
-                "Ты — популярный крипто-блогер, который общается со своей аудиторией в Telegram. "
-                "Теперь пользователь попросил тебя общаться на любые темы, поэтому ты можешь отвечать на широкий круг вопросов. "
-                "Отвечай живо, с юмором, эмодзи, как человек. "
-                "Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, "
-                "ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на криптовалюты, "
-                "задай встречный вопрос о биткоине, Web3 или любимом альткоине. "
-                "Ни в коем случае не высказывай собственного мнения по политике или вере."
-            )
+        # --- Универсальный промпт (любые темы, кроме запретных) ---
+        system_prompt = (
+            "Ты — дружелюбный помощник, которого зовут Яша. Ты общаешься со своей аудиторией в Telegram. "
+            "Отвечай живо, с юмором, эмодзи, как человек, на любые темы. "
+            "Если собеседник затрагивает политику, религию, национализм или любые острые социальные темы, "
+            "ты должен мягко и с юмором уйти от ответа: пошути, переведи разговор на что-то нейтральное, "
+            "задай встречный вопрос о любимых фильмах, книгах, увлечениях. "
+            "Ни в коем случае не высказывай собственного мнения по политике или вере."
+        )
 
         # --- Генерация AI-ответа ---
         try:
