@@ -4,3 +4,4 @@ deep-translator
 pillow
 python-telegram-bot
 openai
+matplotlib
