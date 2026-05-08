@@ -79,7 +79,7 @@ SYMBOL_MAP = {
     'dot': 'DOTUSDT',
     'link': 'LINKUSDT',
     'uni': 'UNIUSDT',
-    'ton': 'TONUSDT',
+    'ton': 'TONCOINUSDT',
 }
 
 def load_mute_list():
