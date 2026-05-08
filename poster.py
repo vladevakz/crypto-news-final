@@ -41,6 +41,7 @@ feedparser.USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36'
 HISTORY_FILE = 'posted.json'
 OFFSET_FILE = 'update_offset.txt'
 MUTE_FILE = 'mute.json'
+MODELS_FILE = 'models.json'
 FONT_PATH = 'Roboto-Bold.ttf'
 
 client = OpenAI(api_key=GROQ_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_KEY else None
@@ -113,6 +114,15 @@ SYMBOL_TO_ID = {
     'cake': 'pancakeswap-token',
     'snx': 'synthetix-network-token',
 }
+
+# -------------------------------
+def load_models():
+    """Загружает настройки AI моделей из models.json."""
+    try:
+        with open(MODELS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"chat": "llama-3.3-70b-versatile", "tts": "canopylabs/orpheus-v1-english", "voice": "hannah"}
 
 def load_mute_list():
     try:
@@ -352,6 +362,8 @@ def form_opinion(question, search_results):
     if not search_results:
         return "К сожалению, мне не удалось найти свежую информацию по этому вопросу."
     context = "\n".join([f"Источник: {r['title']}\n{r['snippet'][:500]}" for r in search_results[:5]])
+    models = load_models()
+    chat_model = models.get('chat', 'llama-3.3-70b-versatile')
     prompt = (
         "Ты — крипто-аналитик с собственным мнением. На основе приведённых источников "
         "сформируй развёрнутое личное мнение по вопросу, ссылаясь на данные. Пиши от первого лица, "
@@ -362,7 +374,7 @@ def form_opinion(question, search_results):
     )
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=chat_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.8,
             max_tokens=700
@@ -447,10 +459,13 @@ def create_news_banner(news_title, background_bytes):
 def generate_voice(text: str):
     if not client:
         return None
+    models = load_models()
+    tts_model = models.get('tts', 'canopylabs/orpheus-v1-english')
+    voice = models.get('voice', 'hannah')
     try:
         response = client.audio.speech.create(
-            model="canopylabs/orpheus-v1-english",
-            voice="hannah",
+            model=tts_model,
+            voice=voice,
             input=text,
             response_format="wav"
         )
@@ -492,6 +507,8 @@ async def post_news():
     banner_title = translated_titles[0]
     body_titles = translated_titles[1:] if len(translated_titles) > 1 else []
     headlines_for_ai = "\n".join([f"- {t}" for t in translated_titles])
+    models = load_models()
+    chat_model = models.get('chat', 'llama-3.3-70b-versatile')
     ai_text = None
     if client:
         prompt = (
@@ -642,6 +659,8 @@ async def reply_to_messages():
             await bot.send_message(chat_id=msg.chat_id, text=opinion, reply_to_message_id=msg.message_id)
             continue
         # Обычный ответ
+        models = load_models()
+        chat_model = models.get('chat', 'llama-3.3-70b-versatile')
         messages = [{"role": "system", "content": "Ты — дружелюбный помощник Яша. Отвечай живо, с юмором, эмодзи. Избегай политики, религии, национализма."}]
         if msg.reply_to_message and msg.reply_to_message.text:
             quoted = msg.reply_to_message.text
@@ -652,7 +671,7 @@ async def reply_to_messages():
         messages.append({"role": "user", "content": user_text})
         try:
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=chat_model,
                 messages=messages,
                 temperature=0.9,
                 max_tokens=500
