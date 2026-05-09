@@ -344,6 +344,7 @@ def generate_chart(coin_id):
 
 # --- Веб-поиск для мнения ---
 def search_web(query, max_results=5):
+    """Поиск через DuckDuckGo с fallback на расширенный запрос."""
     results = []
     try:
         with DDGS() as ddgs:
@@ -355,23 +356,49 @@ def search_web(query, max_results=5):
                 })
         time.sleep(1)
     except Exception as e:
-        print(f"Ошибка DuckDuckGo: {e}")
+        print(f"Ошибка DuckDuckGo (первый запрос): {e}")
+
+    if not results:
+        # Пробуем с дополнительным ключевым словом
+        try:
+            with DDGS() as ddgs:
+                for r in ddgs.text(query + " crypto", max_results=max_results):
+                    results.append({
+                        'title': r['title'],
+                        'snippet': r['body'],
+                        'url': r['href']
+                    })
+            time.sleep(1)
+        except Exception as e:
+            print(f"Ошибка DuckDuckGo (fallback): {e}")
+
     return results
 
 def form_opinion(question, search_results):
-    if not search_results:
-        return "К сожалению, мне не удалось найти свежую информацию по этому вопросу."
-    context = "\n".join([f"Источник: {r['title']}\n{r['snippet'][:500]}" for r in search_results[:5]])
+    """Формирует мнение; если нет результатов поиска, AI отвечает сам."""
     models = load_models()
     chat_model = models.get('chat', 'llama-3.3-70b-versatile')
-    prompt = (
-        "Ты — крипто-аналитик с собственным мнением. На основе приведённых источников "
-        "сформируй развёрнутое личное мнение по вопросу, ссылаясь на данные. Пиши от первого лица, "
-        "уверенно, но с оговорками если данные противоречивы. Добавь вывод в конце.\n\n"
-        f"Вопрос: {question}\n\n"
-        f"Данные:\n{context}\n\n"
-        "Мнение:"
-    )
+
+    if not search_results:
+        prompt = (
+            "Ты — крипто-аналитик с собственным мнением. Свежих источников найти не удалось. "
+            "На основе своих знаний и опыта сформируй развёрнутое личное мнение по вопросу. "
+            "Пиши от первого лица, уверенно, но с оговоркой, что это не консультация, а твоё частное мнение. "
+            "Добавь вывод в конце.\n\n"
+            f"Вопрос: {question}\n\n"
+            "Мнение:"
+        )
+    else:
+        context = "\n".join([f"Источник: {r['title']}\n{r['snippet'][:500]}" for r in search_results[:5]])
+        prompt = (
+            "Ты — крипто-аналитик с собственным мнением. На основе приведённых источников "
+            "сформируй развёрнутое личное мнение по вопросу, ссылаясь на данные. Пиши от первого лица, "
+            "уверенно, но с оговорками если данные противоречивы. Добавь вывод в конце.\n\n"
+            f"Вопрос: {question}\n\n"
+            f"Данные:\n{context}\n\n"
+            "Мнение:"
+        )
+
     try:
         response = client.chat.completions.create(
             model=chat_model,
