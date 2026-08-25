@@ -117,7 +117,6 @@ SYMBOL_TO_ID = {
 
 # -------------------------------
 def load_models():
-    """Загружает настройки AI моделей из models.json."""
     try:
         with open(MODELS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -344,7 +343,6 @@ def generate_chart(coin_id):
 
 # --- Веб-поиск для мнения ---
 def search_web(query, max_results=5):
-    """Поиск через DuckDuckGo с fallback на расширенный запрос."""
     results = []
     try:
         with DDGS() as ddgs:
@@ -374,7 +372,6 @@ def search_web(query, max_results=5):
     return results
 
 def form_opinion(question, search_results):
-    """Формирует мнение; если нет результатов поиска, AI отвечает сам."""
     models = load_models()
     chat_model = models.get('chat', 'llama-3.3-70b-versatile')
 
@@ -415,10 +412,11 @@ def fetch_all_feeds():
     all_entries = []
     seen_urls = set()
 
-    # Список запрещённых фраз в заголовках
+    # Расширенный список запрещённых фраз и паттернов
     bad_phrases = [
-        'error', 'server error', 'that\'s an error', 'page not found',
-        '404', '500', 'bad gateway', 'service unavailable', 'access denied'
+        'error', 'server error', 'that\'s an error', 'that’s an error',
+        'page not found', '404', '500', 'bad gateway', 'service unavailable',
+        'access denied', 'please try again later'
     ]
 
     for url in RSS_FEEDS:
@@ -428,23 +426,43 @@ def fetch_all_feeds():
                 title = entry.get('title', '')
                 link = entry.get('link', '')
 
-                # Пропускаем пустые и мусорные заголовки
+                # Отбрасываем пустые
                 if not title or not link:
                     continue
+
+                # Проверка на запрещённые фразы (без учёта регистра)
                 if any(phrase in title.lower() for phrase in bad_phrases):
                     continue
-                if len(title) > 300:  # слишком длинный заголовок – подозрительно
+
+                # Если заголовок начинается с Error или Server Error – отбрасываем
+                if title.lower().startswith(('error', 'server error', '500', '404')):
                     continue
+
+                # Проверка длины (обычно заголовки ошибок очень длинные)
+                if len(title) > 200:
+                    continue
+
+                # Дополнительная проверка: заголовок не должен содержать подстроку "That's all we know"
+                if "that's all we know" in title.lower() or "that’s all we know" in title.lower():
+                    continue
+
+                # Проверка на наличие даты (в ошибках её обычно нет)
+                if not entry.get('published_parsed'):
+                    # Если нет даты публикации – пропускаем подозрительные записи
+                    continue
+
                 if link not in seen_urls:
                     seen_urls.add(link)
                     all_entries.append(entry)
 
-            # Для лога: считаем количество после фильтрации
             filtered_count = sum(
                 1 for e in feed.entries
                 if e.get('title')
                 and not any(p in e.get('title','').lower() for p in bad_phrases)
-                and len(e.get('title','')) <= 300
+                and len(e.get('title','')) <= 200
+                and not e.get('title','').lower().startswith(('error', 'server error', '500', '404'))
+                and not ("that's all we know" in e.get('title','').lower() or "that’s all we know" in e.get('title','').lower())
+                and e.get('published_parsed')
             )
             print(f"Источник {url}: получено {len(feed.entries)} записей, после фильтрации {filtered_count}")
         except Exception as e:
@@ -459,6 +477,7 @@ def fetch_all_feeds():
     all_entries.sort(key=get_pub_date, reverse=True)
     return all_entries[:MAX_NEWS]
 
+# --- Остальные функции (без изменений) ---
 def get_background_image(query="crypto blockchain technology"):
     if not UNSPLASH_KEY:
         return None
