@@ -359,7 +359,6 @@ def search_web(query, max_results=5):
         print(f"Ошибка DuckDuckGo (первый запрос): {e}")
 
     if not results:
-        # Пробуем с дополнительным ключевым словом
         try:
             with DDGS() as ddgs:
                 for r in ddgs.text(query + " crypto", max_results=max_results):
@@ -413,22 +412,50 @@ def form_opinion(question, search_results):
 
 # --- Новости ---
 def fetch_all_feeds():
-    all_entries, seen_urls = [], set()
+    all_entries = []
+    seen_urls = set()
+
+    # Список запрещённых фраз в заголовках
+    bad_phrases = [
+        'error', 'server error', 'that\'s an error', 'page not found',
+        '404', '500', 'bad gateway', 'service unavailable', 'access denied'
+    ]
+
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
             for entry in feed.entries:
+                title = entry.get('title', '')
                 link = entry.get('link', '')
-                if link and link not in seen_urls:
+
+                # Пропускаем пустые и мусорные заголовки
+                if not title or not link:
+                    continue
+                if any(phrase in title.lower() for phrase in bad_phrases):
+                    continue
+                if len(title) > 300:  # слишком длинный заголовок – подозрительно
+                    continue
+                if link not in seen_urls:
                     seen_urls.add(link)
                     all_entries.append(entry)
+
+            # Для лога: считаем количество после фильтрации
+            filtered_count = sum(
+                1 for e in feed.entries
+                if e.get('title')
+                and not any(p in e.get('title','').lower() for p in bad_phrases)
+                and len(e.get('title','')) <= 300
+            )
+            print(f"Источник {url}: получено {len(feed.entries)} записей, после фильтрации {filtered_count}")
         except Exception as e:
-            print(f"Ошибка парсинга {url}: {e}")
+            print(f"Ошибка при парсинге {url}: {e}")
+
     def get_pub_date(entry):
         try:
             return datetime(*entry.published_parsed[:6])
         except:
             return datetime.min
+
     all_entries.sort(key=get_pub_date, reverse=True)
     return all_entries[:MAX_NEWS]
 
@@ -601,14 +628,12 @@ async def reply_to_messages():
         if not msg or not msg.text and not msg.voice:
             continue
         user_id = msg.from_user.id if msg.from_user else None
-        # MUTE/UNMUTE
         if user_id and user_id in mute_set:
             if msg.text and contains_any(msg.text, UNMUTE_PHRASES):
                 mute_set.discard(user_id)
                 save_mute_list(mute_set)
                 await bot.send_message(chat_id=msg.chat_id, text="Я снова буду отвечать на ваши сообщения!", reply_to_message_id=msg.message_id)
             continue
-        # Админы и боты
         admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
         ADMIN_IDS = set()
         if admin_ids_str:
@@ -618,7 +643,6 @@ async def reply_to_messages():
                 pass
         if (user_id and user_id in ADMIN_IDS) or (msg.from_user and msg.from_user.is_bot):
             continue
-        # Текст или голос
         user_text = None
         is_voice = False
         if msg.text:
@@ -641,7 +665,6 @@ async def reply_to_messages():
                     continue
         if not user_text:
             continue
-        # MUTE/UNMUTE команды
         if msg.text and contains_any(msg.text, MUTE_PHRASES):
             mute_set.add(user_id)
             save_mute_list(mute_set)
@@ -650,18 +673,13 @@ async def reply_to_messages():
         if msg.text and contains_any(msg.text, UNMUTE_PHRASES):
             await bot.send_message(chat_id=msg.chat_id, text="Я и так могу отвечать! 😊", reply_to_message_id=msg.message_id)
             continue
-        # Фильтр обращения
         addressed = is_addressed_to_yasha(user_text)
         is_reply_to_bot = msg.reply_to_message and msg.reply_to_message.from_user and msg.reply_to_message.from_user.is_bot
         if not addressed and not is_reply_to_bot:
             continue
-
-        # Флаги для разных типов ответа
         do_chart = contains_any(user_text, CHART_KEYWORDS)
         do_analysis = contains_any(user_text, ANALYSIS_KEYWORDS)
         do_regular = not (do_chart or do_analysis)
-
-        # --- Анализ (если нужно) ---
         if do_analysis:
             question = user_text.lower()
             for phrase in ANALYSIS_KEYWORDS + ['яша', 'яш']:
@@ -676,8 +694,6 @@ async def reply_to_messages():
                 if voice_data:
                     await bot.send_voice(chat_id=msg.chat_id, voice=voice_data, reply_to_message_id=msg.message_id)
             await bot.send_message(chat_id=msg.chat_id, text=opinion, reply_to_message_id=msg.message_id)
-
-        # --- График (если нужно) ---
         if do_chart:
             coin_id = detect_coin_id(user_text)
             chart_buf = generate_chart(coin_id)
@@ -690,8 +706,6 @@ async def reply_to_messages():
                 await bot.send_photo(chat_id=msg.chat_id, photo=chart_buf, caption=caption, reply_to_message_id=msg.message_id)
             else:
                 await bot.send_message(chat_id=msg.chat_id, text="Не удалось получить данные для графика. Попробуйте позже.", reply_to_message_id=msg.message_id)
-
-        # --- Обычный ответ (если нет ни анализа, ни графика) ---
         if do_regular:
             models = load_models()
             chat_model = models.get('chat', 'llama-3.3-70b-versatile')
